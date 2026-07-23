@@ -16,7 +16,7 @@ export function UploadOverlay({ progress, destinationLabel }: UploadOverlayProps
         style={{ borderColor: COLORS.progressRing, borderTopColor: COLORS.primary }}
       />
       <div className="text-[15px] font-medium" style={{ color: COLORS.text }}>
-        Uploading (demo)…
+        Uploading to Google Drive…
       </div>
       <div
         className="h-1.5 w-[200px] overflow-hidden rounded-full"
@@ -31,7 +31,7 @@ export function UploadOverlay({ progress, destinationLabel }: UploadOverlayProps
         {destinationLabel}
       </div>
       <div className="text-center text-[11.5px]" style={{ color: COLORS.textSubtle }}>
-        Google Drive integration coming soon
+        {progress}% complete
       </div>
     </div>
   );

@@ -30,8 +30,11 @@ yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 
-# env files
+# env files — keep secrets out of git; commit .env.example only
+.env
+.env.local
 .env*.local
+!.env.example
 
 # vercel
 .vercel

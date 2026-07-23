@@ -11,7 +11,12 @@ const compat = new FlatCompat({
 
 const eslintConfig = [
   {
-    ignores: ["Bill Uploader Mobile App-handoff/**"],
+    ignores: [
+      "Bill Uploader Mobile App-handoff/**",
+      ".next/**",
+      "node_modules/**",
+      "**/next-env.d.ts",
+    ],
   },
   ...compat.extends("next/core-web-vitals", "next/typescript"),
 ];

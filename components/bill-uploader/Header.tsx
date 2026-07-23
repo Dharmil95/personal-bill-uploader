@@ -3,9 +3,10 @@ import { COLORS } from "@/lib/bill-uploader/constants";
 type HeaderProps = {
   title: string;
   subtitle: string;
+  onLogout: () => void;
 };
 
-export function Header({ title, subtitle }: HeaderProps) {
+export function Header({ title, subtitle, onLogout }: HeaderProps) {
   return (
     <div
       className="flex flex-none items-center justify-between px-5 pb-3.5 pt-[18px]"
@@ -22,12 +23,14 @@ export function Header({ title, subtitle }: HeaderProps) {
           {subtitle}
         </div>
       </div>
-      <div
-        className="flex h-[38px] w-[38px] items-center justify-center rounded-full text-[15px] font-semibold text-white"
-        style={{ background: COLORS.primary }}
+      <button
+        type="button"
+        onClick={onLogout}
+        className="rounded-full px-3 py-2 text-[12px] font-semibold"
+        style={{ background: COLORS.primaryLight, color: COLORS.primary }}
       >
-        O
-      </div>
+        Log out
+      </button>
     </div>
   );
 }

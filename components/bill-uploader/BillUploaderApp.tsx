@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useId, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 
 import { AppShell } from "@/components/bill-uploader/AppShell";
 import { BottomNav } from "@/components/bill-uploader/BottomNav";
@@ -10,16 +11,21 @@ import { Toast } from "@/components/bill-uploader/Toast";
 import { UploadOverlay } from "@/components/bill-uploader/UploadOverlay";
 import { UploadTab } from "@/components/bill-uploader/upload/UploadTab";
 import { useToast } from "@/hooks/useToast";
-import { SEED_CATEGORIES, SEED_RECENT } from "@/lib/bill-uploader/constants";
-import { startMockUpload } from "@/lib/bill-uploader/mockUpload";
+import { MAX_UPLOAD_BYTES, SEED_CATEGORIES } from "@/lib/bill-uploader/constants";
+import { uploadFilesToDrive } from "@/lib/bill-uploader/driveUpload";
 import type { RecentItem, SelectedFile, Tab } from "@/lib/bill-uploader/types";
 import {
   buildUploadFilename,
+  formatBytes,
   formatRecentTotal,
+  getFileTypeFromMime,
+  isAllowedUploadFile,
   isPdfFile,
+  resolveUploadMimeType,
 } from "@/lib/bill-uploader/utils";
 
 export function BillUploaderApp() {
+  const router = useRouter();
   const idPrefix = useId().replace(/:/g, "");
   const nextIdRef = useRef(3);
 
@@ -32,13 +38,14 @@ export function BillUploaderApp() {
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [filterCategory, setFilterCategory] = useState("All");
-  const [recent, setRecent] = useState<RecentItem[]>(() => [...SEED_RECENT]);
+  const [recent, setRecent] = useState<RecentItem[]>([]);
+  const [recentLoading, setRecentLoading] = useState(false);
 
   const { toast, showToast } = useToast();
 
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const cancelUploadRef = useRef<(() => void) | null>(null);
+  const uploadAbortRef = useRef<AbortController | null>(null);
   const previewUrlsRef = useRef<Map<string, string>>(new Map());
 
   const createId = useCallback(() => {
@@ -55,12 +62,66 @@ export function BillUploaderApp() {
     }
   }, []);
 
+  const loadCategories = useCallback(async () => {
+    try {
+      const response = await fetch("/api/drive/categories");
+      const data = (await response.json()) as { categories?: string[] };
+      if (response.ok && data.categories?.length) {
+        setCategories(data.categories);
+      }
+    } catch {
+      // Keep seeded categories when Drive is unavailable.
+    }
+  }, []);
+
+  const loadRecent = useCallback(async (category = filterCategory) => {
+    setRecentLoading(true);
+    try {
+      const query = category === "All" ? "" : `?category=${encodeURIComponent(category)}`;
+      const response = await fetch(`/api/drive/recent${query}`);
+      const data = (await response.json()) as { items?: RecentItem[]; error?: string };
+
+      if (!response.ok) {
+        throw new Error(data.error ?? "Failed to load recent uploads");
+      }
+
+      const items = data.items ?? [];
+      const nextThumbs = new Set(
+        items.map((item) => item.thumb).filter((thumb): thumb is string => !!thumb),
+      );
+
+      previewUrlsRef.current.forEach((url, id) => {
+        if (url.startsWith("blob:") && !nextThumbs.has(url)) {
+          URL.revokeObjectURL(url);
+          previewUrlsRef.current.delete(id);
+        }
+      });
+
+      setRecent(items);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to load recent uploads";
+      showToast(message);
+    } finally {
+      setRecentLoading(false);
+    }
+  }, [filterCategory, showToast]);
+
+  useEffect(() => {
+    void loadCategories();
+  }, [loadCategories]);
+
+  useEffect(() => {
+    if (tab === "recent") {
+      void loadRecent(filterCategory);
+    }
+  }, [tab, filterCategory, loadRecent]);
+
   useEffect(() => {
     const urls = previewUrlsRef.current;
     return () => {
       urls.forEach((url) => URL.revokeObjectURL(url));
       urls.clear();
-      cancelUploadRef.current?.();
+      uploadAbortRef.current?.abort();
     };
   }, []);
 
@@ -74,6 +135,16 @@ export function BillUploaderApp() {
     }
 
     list.forEach((file) => {
+      if (!isAllowedUploadFile(file)) {
+        showToast(`${file.name} is not a supported image or PDF`);
+        return;
+      }
+
+      if (file.size > MAX_UPLOAD_BYTES) {
+        showToast(`${file.name} exceeds the ${formatBytes(MAX_UPLOAD_BYTES)} limit`);
+        return;
+      }
+
       const id = createId();
       const isPdf = isPdfFile(file);
       const previewUrl = isPdf ? null : URL.createObjectURL(file);
@@ -89,6 +160,7 @@ export function BillUploaderApp() {
           name: file.name,
           isPdf,
           previewUrl,
+          file,
         },
       ]);
     });
@@ -123,53 +195,80 @@ export function BillUploaderApp() {
     setCustomText("");
   };
 
-  const finishUpload = useCallback(
-    (category: string) => {
-      setFiles((currentFiles) => {
-        const newItems: RecentItem[] = currentFiles.map((file) => {
-          previewUrlsRef.current.delete(file.id);
-          return {
-            id: createId(),
-            filename: buildUploadFilename(category, file.name),
-            category,
-            fileType: file.isPdf ? "pdf" : "image",
-            thumb: file.previewUrl,
-            uploadedAt: "Just now",
-          };
-        });
-
-        setRecent((currentRecent) => [...newItems, ...currentRecent]);
-        setSelectedCategory(null);
-        setUploading(false);
-        setUploadProgress(0);
-        showToast(
-          `Demo upload complete — ${newItems.length} file${newItems.length === 1 ? "" : "s"} queued for Bills/${category}`,
-        );
-
-        return [];
-      });
-    },
-    [createId, showToast],
-  );
-
-  const submit = () => {
+  const submit = async () => {
     if (uploading || files.length === 0 || !selectedCategory) {
       return;
     }
 
     const category = selectedCategory;
+    const uploadFiles = files.map((selected) => ({
+      file: selected.file,
+      filename: buildUploadFilename(category, selected.name),
+    }));
+
+    uploadAbortRef.current?.abort();
+    const abortController = new AbortController();
+    uploadAbortRef.current = abortController;
 
     setUploading(true);
     setUploadProgress(0);
-    cancelUploadRef.current?.();
-    cancelUploadRef.current = startMockUpload({
-      onProgress: setUploadProgress,
-      onComplete: () => finishUpload(category),
-    });
+
+    try {
+      const results = await uploadFilesToDrive(
+        uploadFiles,
+        category,
+        setUploadProgress,
+        abortController.signal,
+      );
+
+      const newItems: RecentItem[] = results.map((result, index) => {
+        const selected = files[index];
+        const mimeType =
+          result.mimeType ?? resolveUploadMimeType(selected.name, selected.file.type);
+        return {
+          id: result.id || createId(),
+          filename: result.name ?? uploadFiles[index].filename,
+          category: result.appProperties?.category ?? category,
+          fileType: getFileTypeFromMime(mimeType),
+          // Keep local blob previews; do not revoke yet (used as recent thumbs).
+          thumb: selected.previewUrl,
+          uploadedAt: "Just now",
+          webViewLink: result.webViewLink ?? null,
+        };
+      });
+
+      // Drop selected files, but keep blob URLs alive for recent-item thumbs.
+      setFiles([]);
+      setSelectedCategory(null);
+      setRecent((currentRecent) => [...newItems, ...currentRecent]);
+      showToast(
+        `Uploaded ${newItems.length} file${newItems.length === 1 ? "" : "s"} to Bills/${category}`,
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Upload failed";
+      if (message !== "Upload cancelled") {
+        showToast(message);
+      }
+    } finally {
+      setUploading(false);
+      setUploadProgress(0);
+      uploadAbortRef.current = null;
+    }
   };
 
   const openItem = (item: RecentItem) => {
-    showToast(`Drive preview coming soon — Bills/${item.category}/${item.filename}`);
+    if (item.webViewLink) {
+      window.open(item.webViewLink, "_blank", "noopener,noreferrer");
+      return;
+    }
+
+    showToast(`Bills/${item.category}/${item.filename}`);
+  };
+
+  const logout = async () => {
+    await fetch("/api/auth/logout", { method: "POST" });
+    router.replace("/login");
+    router.refresh();
   };
 
   const visibleRecent =
@@ -183,8 +282,10 @@ export function BillUploaderApp() {
 
   const headerTitle = isUploadTab ? "Upload a bill" : "Recent uploads";
   const headerSubtitle = isUploadTab
-    ? "Google Drive integration coming soon"
-    : formatRecentTotal(recent.length);
+    ? "Saved to Google Drive"
+    : recentLoading
+      ? "Loading from Google Drive…"
+      : formatRecentTotal(recent.length);
 
   const submitLabel = uploading
     ? "Uploading…"
@@ -194,7 +295,7 @@ export function BillUploaderApp() {
 
   return (
     <AppShell>
-      <Header title={headerTitle} subtitle={headerSubtitle} />
+      <Header title={headerTitle} subtitle={headerSubtitle} onLogout={() => void logout()} />
       {toast.visible ? <Toast message={toast.message} /> : null}
       {isUploadTab ? (
         <UploadTab
@@ -216,7 +317,7 @@ export function BillUploaderApp() {
           onToggleCustomMode={toggleCustomMode}
           onCustomTextChange={setCustomText}
           onConfirmCustomCategory={confirmCustomCategory}
-          onSubmit={submit}
+          onSubmit={() => void submit()}
         />
       ) : (
         <RecentTab

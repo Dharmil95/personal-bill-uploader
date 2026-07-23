@@ -5,6 +5,7 @@ export type SelectedFile = {
   name: string;
   isPdf: boolean;
   previewUrl: string | null;
+  file: File;
 };
 
 export type RecentItem = {
@@ -14,6 +15,7 @@ export type RecentItem = {
   fileType: "image" | "pdf";
   thumb: string | null;
   uploadedAt: string;
+  webViewLink?: string | null;
 };
 
 export type ToastState = {

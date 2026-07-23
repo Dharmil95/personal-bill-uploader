@@ -1,5 +1,3 @@
-import type { RecentItem } from "./types";
-
 export const SEED_CATEGORIES = [
   "Groceries",
   "Vegetables & Fruits",
@@ -9,24 +7,7 @@ export const SEED_CATEGORIES = [
   "Insurance",
 ] as const;
 
-export const SEED_RECENT: RecentItem[] = [
-  {
-    id: "seed1",
-    filename: "groceries_2026-07-22_jiomart-order.jpg",
-    category: "Groceries",
-    fileType: "image",
-    thumb: "/seed/jiomart-order.jpg",
-    uploadedAt: "Yesterday, 6:40 PM",
-  },
-  {
-    id: "seed2",
-    filename: "vegetables-fruits_2026-07-23_invoice.jpg",
-    category: "Vegetables & Fruits",
-    fileType: "image",
-    thumb: "/seed/vegetables-invoice.jpeg",
-    uploadedAt: "Today, 9:14 AM",
-  },
-];
+export const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
 
 export const TOAST_DURATION_MS = 2600;
 
