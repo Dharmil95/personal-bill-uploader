@@ -1,0 +1,35 @@
+@import "tailwindcss";
+
+:root {
+  --color-page-bg: #eef2f0;
+  --color-shell-bg: #f7faf9;
+  --color-primary: #00695c;
+  --color-text: #1a1c1b;
+  --color-text-muted: #49454f;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--color-page-bg);
+  color: var(--color-text);
+}
+
+::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.animate-spin-slow {
+  animation: spin 0.9s linear infinite;
+}
