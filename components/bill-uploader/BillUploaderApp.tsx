@@ -5,12 +5,16 @@ import { useRouter } from "next/navigation";
 
 import { AppShell } from "@/components/bill-uploader/AppShell";
 import { BottomNav } from "@/components/bill-uploader/BottomNav";
+import { BillDetailSheet } from "@/components/bill-uploader/dashboard/BillDetailSheet";
+import { DashboardTab } from "@/components/bill-uploader/dashboard/DashboardTab";
 import { Header } from "@/components/bill-uploader/Header";
 import { RecentTab } from "@/components/bill-uploader/recent/RecentTab";
 import { Toast } from "@/components/bill-uploader/Toast";
 import { UploadOverlay } from "@/components/bill-uploader/UploadOverlay";
 import { UploadTab } from "@/components/bill-uploader/upload/UploadTab";
 import { useToast } from "@/hooks/useToast";
+import type { DashboardSummary } from "@/lib/dashboard/types";
+import { formatInrAmount } from "@/lib/dashboard/format";
 import {
   DEFAULT_EXPENSE_OWNER,
   DEFAULT_RECENT_OWNER_FILTER,
@@ -69,6 +73,10 @@ export function BillUploaderApp() {
   const [filterCategory, setFilterCategory] = useState("All");
   const [recent, setRecent] = useState<RecentItem[]>([]);
   const [recentLoading, setRecentLoading] = useState(false);
+  const [dashboardFilterOwner, setDashboardFilterOwner] = useState<RecentOwnerFilter>("everyone");
+  const [dashboardSummary, setDashboardSummary] = useState<DashboardSummary | null>(null);
+  const [dashboardLoading, setDashboardLoading] = useState(false);
+  const [selectedExpenseId, setSelectedExpenseId] = useState<string | null>(null);
 
   const { toast, showToast } = useToast();
 
@@ -137,6 +145,29 @@ export function BillUploaderApp() {
     [filterCategory, filterOwner, showToast],
   );
 
+  const loadDashboard = useCallback(
+    async (owner: RecentOwnerFilter = dashboardFilterOwner) => {
+      setDashboardLoading(true);
+      try {
+        const response = await fetch(`/api/dashboard/summary?owner=${owner}`);
+        const data = (await response.json()) as DashboardSummary & { error?: string };
+
+        if (!response.ok) {
+          throw new Error(data.error ?? "Failed to load dashboard");
+        }
+
+        setDashboardSummary(data);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Failed to load dashboard";
+        showToast(message);
+        setDashboardSummary(null);
+      } finally {
+        setDashboardLoading(false);
+      }
+    },
+    [dashboardFilterOwner, showToast],
+  );
+
   useEffect(() => {
     if (tab === "upload") {
       void loadCategories(selectedOwner);
@@ -149,6 +180,12 @@ export function BillUploaderApp() {
       void loadRecent(filterOwner, filterCategory);
     }
   }, [tab, filterOwner, filterCategory, loadCategories, loadRecent]);
+
+  useEffect(() => {
+    if (tab === "dashboard" && !selectedExpenseId) {
+      void loadDashboard(dashboardFilterOwner);
+    }
+  }, [tab, dashboardFilterOwner, selectedExpenseId, loadDashboard]);
 
   useEffect(() => {
     const urls = previewUrlsRef.current;
@@ -320,6 +357,17 @@ export function BillUploaderApp() {
     setFilterCategory("All");
   };
 
+  const handleDashboardOwnerFilterChange = (owner: RecentOwnerFilter) => {
+    setDashboardFilterOwner(owner);
+  };
+
+  const handleTabChange = (nextTab: Tab) => {
+    setTab(nextTab);
+    if (nextTab !== "dashboard") {
+      setSelectedExpenseId(null);
+    }
+  };
+
   const visibleRecent =
     filterCategory === "All"
       ? recent
@@ -328,13 +376,31 @@ export function BillUploaderApp() {
   const hasFiles = files.length > 0;
   const canSubmit = hasFiles && !!selectedCategory && !uploading;
   const isUploadTab = tab === "upload";
+  const isRecentTab = tab === "recent";
+  const isDashboardTab = tab === "dashboard";
+  const isBillDetailOpen = isDashboardTab && !!selectedExpenseId;
 
-  const headerTitle = isUploadTab ? "Upload a bill" : "Recent uploads";
+  const headerTitle = isUploadTab
+    ? "Upload a bill"
+    : isRecentTab
+      ? "Recent uploads"
+      : isBillDetailOpen
+        ? "Bill detail"
+        : "Dashboard";
+
   const headerSubtitle = isUploadTab
     ? `Saved to Google Drive · ${getOwnerLabel(selectedOwner)}`
-    : recentLoading
-      ? "Loading from Google Drive…"
-      : formatRecentTotal(recent.length);
+    : isRecentTab
+      ? recentLoading
+        ? "Loading from Google Drive…"
+        : formatRecentTotal(recent.length)
+      : isBillDetailOpen
+        ? "Line items and totals"
+        : dashboardLoading
+          ? "Loading from Supabase…"
+          : dashboardSummary
+            ? `${dashboardSummary.billCount} bill${dashboardSummary.billCount === 1 ? "" : "s"} · ${formatInrAmount(dashboardSummary.totalSpend, dashboardSummary.currency)} total`
+            : "Spend at a glance";
 
   const submitLabel = uploading
     ? "Uploading…"
@@ -370,7 +436,7 @@ export function BillUploaderApp() {
           onConfirmCustomCategory={confirmCustomCategory}
           onSubmit={() => void submit()}
         />
-      ) : (
+      ) : isRecentTab ? (
         <RecentTab
           categories={categories}
           filterOwner={filterOwner}
@@ -380,8 +446,27 @@ export function BillUploaderApp() {
           onFilterChange={setFilterCategory}
           onOpenItem={openItem}
         />
+      ) : isBillDetailOpen && selectedExpenseId ? (
+        <BillDetailSheet
+          expenseId={selectedExpenseId}
+          onBack={() => setSelectedExpenseId(null)}
+          onError={showToast}
+        />
+      ) : (
+        <DashboardTab
+          summary={dashboardSummary}
+          loading={dashboardLoading}
+          filterOwner={dashboardFilterOwner}
+          onOwnerFilterChange={handleDashboardOwnerFilterChange}
+          onSelectBill={setSelectedExpenseId}
+        />
       )}
-      <BottomNav activeTab={tab} onUpload={() => setTab("upload")} onRecent={() => setTab("recent")} />
+      <BottomNav
+        activeTab={tab}
+        onUpload={() => handleTabChange("upload")}
+        onRecent={() => handleTabChange("recent")}
+        onDashboard={() => handleTabChange("dashboard")}
+      />
       {uploading ? (
         <UploadOverlay
           progress={Math.round(uploadProgress)}

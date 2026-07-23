@@ -1,4 +1,4 @@
-export type Tab = "upload" | "recent";
+export type Tab = "upload" | "recent" | "dashboard";
 
 export type ExpenseOwner = "me" | "parents";
 

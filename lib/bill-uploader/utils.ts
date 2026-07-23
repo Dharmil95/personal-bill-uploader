@@ -98,6 +98,14 @@ export function parseRecentOwnerFilter(value: string | null): RecentOwnerFilter 
   return DEFAULT_EXPENSE_OWNER;
 }
 
+export function parseDashboardOwnerFilter(value: string | null): RecentOwnerFilter {
+  if (value && RECENT_OWNER_FILTERS.includes(value as RecentOwnerFilter)) {
+    return value as RecentOwnerFilter;
+  }
+
+  return "everyone";
+}
+
 export function parseExpenseOwner(value: string | null | undefined): ExpenseOwner {
   if (value && isValidExpenseOwner(value)) {
     return value;
