@@ -1,3 +1,5 @@
+import type { ExpenseOwner, RecentOwnerFilter } from "./types";
+
 export const SEED_CATEGORIES = [
   "Groceries",
   "Vegetables & Fruits",
@@ -6,6 +8,30 @@ export const SEED_CATEGORIES = [
   "Internet",
   "Insurance",
 ] as const;
+
+export const EXPENSE_OWNERS: ExpenseOwner[] = ["me", "parents"];
+
+export const OWNER_FOLDER_NAMES: Record<ExpenseOwner, string> = {
+  me: "Me",
+  parents: "Parents",
+};
+
+export const OWNER_LABELS: Record<ExpenseOwner, string> = {
+  me: "Me",
+  parents: "Parents",
+};
+
+export const DEFAULT_EXPENSE_OWNER: ExpenseOwner = "me";
+
+export const RECENT_OWNER_FILTERS: RecentOwnerFilter[] = ["me", "parents", "everyone"];
+
+export const RECENT_OWNER_FILTER_LABELS: Record<RecentOwnerFilter, string> = {
+  me: "Me",
+  parents: "Parents",
+  everyone: "Everyone",
+};
+
+export const DEFAULT_RECENT_OWNER_FILTER: RecentOwnerFilter = "me";
 
 export const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
 

@@ -3,10 +3,10 @@ import { NextResponse } from "next/server";
 import { getAllowedOrigin } from "@/lib/auth/request";
 import {
   createResumableUploadSession,
-  ensureCategoryFolder,
+  ensureOwnerCategoryFolder,
   MAX_UPLOAD_BYTES,
 } from "@/lib/google-drive/client";
-import { isAllowedMimeType, resolveUploadMimeType } from "@/lib/bill-uploader/utils";
+import { isAllowedMimeType, isValidExpenseOwner, resolveUploadMimeType } from "@/lib/bill-uploader/utils";
 
 export async function POST(request: Request) {
   try {
@@ -20,17 +20,23 @@ export async function POST(request: Request) {
       mimeType?: string;
       fileSize?: number;
       category?: string;
+      owner?: string;
     };
 
     const filename = body.filename?.trim();
     const fileSize = body.fileSize ?? 0;
     const category = body.category?.trim();
+    const owner = body.owner?.trim() ?? "";
     const mimeType = filename
       ? resolveUploadMimeType(filename, body.mimeType)
       : "application/octet-stream";
 
     if (!filename || !category) {
       return NextResponse.json({ error: "filename and category are required" }, { status: 400 });
+    }
+
+    if (!isValidExpenseOwner(owner)) {
+      return NextResponse.json({ error: "owner must be me or parents" }, { status: 400 });
     }
 
     if (!isAllowedMimeType(mimeType)) {
@@ -47,12 +53,13 @@ export async function POST(request: Request) {
       );
     }
 
-    const { folderId, accessToken } = await ensureCategoryFolder(category);
+    const { folderId, accessToken } = await ensureOwnerCategoryFolder(owner, category);
     const sessionUri = await createResumableUploadSession({
       filename,
       mimeType,
       fileSize,
       category,
+      owner,
       folderId,
       accessToken,
       origin,

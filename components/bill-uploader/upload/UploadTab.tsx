@@ -1,15 +1,17 @@
 import type { RefObject } from "react";
 
-import type { SelectedFile } from "@/lib/bill-uploader/types";
+import type { ExpenseOwner, SelectedFile } from "@/lib/bill-uploader/types";
 
 import { CategoryChips } from "./CategoryChips";
 import { FilePickerActions } from "./FilePickerActions";
+import { OwnerChips } from "./OwnerChips";
 import { SelectedFilesGrid } from "./SelectedFilesGrid";
 import { SubmitBar } from "./SubmitBar";
 
 type UploadTabProps = {
   files: SelectedFile[];
   categories: string[];
+  selectedOwner: ExpenseOwner;
   selectedCategory: string | null;
   customMode: boolean;
   customText: string;
@@ -22,6 +24,7 @@ type UploadTabProps = {
   onTriggerCamera: () => void;
   onTriggerFile: () => void;
   onRemoveFile: (id: string) => void;
+  onSelectOwner: (owner: ExpenseOwner) => void;
   onSelectCategory: (name: string) => void;
   onToggleCustomMode: () => void;
   onCustomTextChange: (value: string) => void;
@@ -32,6 +35,7 @@ type UploadTabProps = {
 export function UploadTab({
   files,
   categories,
+  selectedOwner,
   selectedCategory,
   customMode,
   customText,
@@ -43,6 +47,7 @@ export function UploadTab({
   onTriggerCamera,
   onTriggerFile,
   onRemoveFile,
+  onSelectOwner,
   onSelectCategory,
   onToggleCustomMode,
   onCustomTextChange,
@@ -60,6 +65,7 @@ export function UploadTab({
           onTriggerFile={onTriggerFile}
         />
         <SelectedFilesGrid files={files} onRemove={onRemoveFile} />
+        <OwnerChips selectedOwner={selectedOwner} onSelectOwner={onSelectOwner} />
         <CategoryChips
           categories={categories}
           selectedCategory={selectedCategory}

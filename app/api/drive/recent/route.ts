@@ -1,26 +1,31 @@
 import { NextResponse } from "next/server";
 
-import { listRecentFiles } from "@/lib/google-drive/client";
-import { formatDriveTimestamp, getFileTypeFromMime } from "@/lib/bill-uploader/utils";
+import { listRecentFiles, parseDriveFileOwner } from "@/lib/google-drive/client";
+import { formatDriveTimestamp, getFileTypeFromMime, parseRecentOwnerFilter } from "@/lib/bill-uploader/utils";
 
 export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
     const category = searchParams.get("category") ?? undefined;
-    const files = await listRecentFiles(category === "All" ? undefined : category);
+    const ownerFilter = parseRecentOwnerFilter(searchParams.get("owner"));
+
+    const files = await listRecentFiles({
+      owner: ownerFilter === "everyone" ? undefined : ownerFilter,
+      category: category && category !== "All" ? category : undefined,
+    });
 
     const items = files
       .filter((file) => file.mimeType !== "application/vnd.google-apps.folder")
       .map((file) => ({
-      id: file.id,
-      filename: file.name,
-      category: file.appProperties?.category ?? "Uncategorized",
-      fileType: getFileTypeFromMime(file.mimeType),
-      // Drive thumbnailLink often requires auth and fails in <img>; prefer opening the file.
-      thumb: null,
-      uploadedAt: file.createdTime ? formatDriveTimestamp(file.createdTime) : "Unknown",
-      webViewLink: file.webViewLink ?? null,
-    }));
+        id: file.id,
+        filename: file.name,
+        category: file.appProperties?.category ?? "Uncategorized",
+        owner: parseDriveFileOwner(file.appProperties),
+        fileType: getFileTypeFromMime(file.mimeType),
+        thumb: null,
+        uploadedAt: file.createdTime ? formatDriveTimestamp(file.createdTime) : "Unknown",
+        webViewLink: file.webViewLink ?? null,
+      }));
 
     return NextResponse.json({ items });
   } catch (error) {

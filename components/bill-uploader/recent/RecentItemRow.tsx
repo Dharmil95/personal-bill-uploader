@@ -1,4 +1,4 @@
-import { COLORS } from "@/lib/bill-uploader/constants";
+import { COLORS, OWNER_LABELS } from "@/lib/bill-uploader/constants";
 import type { RecentItem } from "@/lib/bill-uploader/types";
 
 type RecentItemRowProps = {
@@ -37,7 +37,13 @@ export function RecentItemRow({ item, onOpen }: RecentItemRowProps) {
         <div className="truncate text-sm font-medium" style={{ color: COLORS.text }}>
           {item.filename}
         </div>
-        <div className="mt-1 flex items-center gap-1.5">
+        <div className="mt-1 flex flex-wrap items-center gap-1.5">
+          <span
+            className="rounded-full px-2 py-0.5 text-[11px] font-semibold"
+            style={{ background: COLORS.primaryMuted, color: COLORS.primaryDark }}
+          >
+            {OWNER_LABELS[item.owner]}
+          </span>
           <span
             className="rounded-full px-2 py-0.5 text-[11px] font-semibold"
             style={{ background: COLORS.primaryLight, color: COLORS.primary }}

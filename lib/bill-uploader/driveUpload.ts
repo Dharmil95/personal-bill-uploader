@@ -1,4 +1,5 @@
 import { resolveUploadMimeType } from "@/lib/bill-uploader/utils";
+import type { ExpenseOwner } from "@/lib/bill-uploader/types";
 
 type UploadSessionResponse = {
   sessionUri: string;
@@ -16,6 +17,7 @@ type DriveUploadResult = {
 type UploadFileOptions = {
   file: File;
   category: string;
+  owner: ExpenseOwner;
   filename: string;
   onProgress: (progress: number) => void;
   signal?: AbortSignal;
@@ -24,6 +26,7 @@ type UploadFileOptions = {
 export async function requestUploadSession(
   file: File,
   category: string,
+  owner: ExpenseOwner,
   filename: string,
 ): Promise<string> {
   const mimeType = resolveUploadMimeType(filename, file.type);
@@ -36,6 +39,7 @@ export async function requestUploadSession(
       mimeType,
       fileSize: file.size,
       category,
+      owner,
     }),
   });
 
@@ -121,17 +125,19 @@ export function uploadFileToSession(
 export async function uploadFileToDrive({
   file,
   category,
+  owner,
   filename,
   onProgress,
   signal,
 }: UploadFileOptions): Promise<DriveUploadResult> {
-  const sessionUri = await requestUploadSession(file, category, filename);
+  const sessionUri = await requestUploadSession(file, category, owner, filename);
   return uploadFileToSession(file, sessionUri, filename, onProgress, signal);
 }
 
 export async function uploadFilesToDrive(
   files: Array<{ file: File; filename: string }>,
   category: string,
+  owner: ExpenseOwner,
   onProgress: (progress: number) => void,
   signal?: AbortSignal,
 ): Promise<DriveUploadResult[]> {
@@ -146,6 +152,7 @@ export async function uploadFilesToDrive(
     const result = await uploadFileToDrive({
       file: current.file,
       category,
+      owner,
       filename: current.filename,
       signal,
       onProgress: (fileProgress) => {

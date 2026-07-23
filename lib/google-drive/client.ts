@@ -1,4 +1,6 @@
-import { MAX_UPLOAD_BYTES } from "@/lib/bill-uploader/constants";
+import { MAX_UPLOAD_BYTES, OWNER_FOLDER_NAMES } from "@/lib/bill-uploader/constants";
+import type { ExpenseOwner, RecentOwnerFilter } from "@/lib/bill-uploader/types";
+import { getOwnerFolderName, isValidExpenseOwner } from "@/lib/bill-uploader/utils";
 
 export const DRIVE_ROOT_FOLDER = "Bills";
 export const DRIVE_APP_SOURCE = "bill-uploader";
@@ -143,23 +145,42 @@ async function createFolder(
   return data.id;
 }
 
-export async function ensureCategoryFolder(category: string): Promise<{
+async function ensureFolderPath(
+  accessToken: string,
+  folderNames: string[],
+): Promise<string> {
+  let parentId: string | null = null;
+
+  for (const name of folderNames) {
+    let folderId = await findFolderByName(accessToken, name, parentId);
+    if (!folderId) {
+      folderId = await createFolder(accessToken, name, parentId);
+    }
+    parentId = folderId;
+  }
+
+  if (!parentId) {
+    throw new Error("Failed to resolve Google Drive folder path");
+  }
+
+  return parentId;
+}
+
+export async function ensureOwnerCategoryFolder(
+  owner: ExpenseOwner,
+  category: string,
+): Promise<{
   folderId: string;
   accessToken: string;
 }> {
   const accessToken = await refreshAccessToken();
+  const folderId = await ensureFolderPath(accessToken, [
+    DRIVE_ROOT_FOLDER,
+    getOwnerFolderName(owner),
+    category,
+  ]);
 
-  let rootFolderId = await findFolderByName(accessToken, DRIVE_ROOT_FOLDER, null);
-  if (!rootFolderId) {
-    rootFolderId = await createFolder(accessToken, DRIVE_ROOT_FOLDER, null);
-  }
-
-  let categoryFolderId = await findFolderByName(accessToken, category, rootFolderId);
-  if (!categoryFolderId) {
-    categoryFolderId = await createFolder(accessToken, category, rootFolderId);
-  }
-
-  return { folderId: categoryFolderId, accessToken };
+  return { folderId, accessToken };
 }
 
 export async function createResumableUploadSession(params: {
@@ -167,6 +188,7 @@ export async function createResumableUploadSession(params: {
   mimeType: string;
   fileSize: number;
   category: string;
+  owner: ExpenseOwner;
   folderId: string;
   accessToken: string;
   origin: string;
@@ -177,6 +199,7 @@ export async function createResumableUploadSession(params: {
     appProperties: {
       source: DRIVE_APP_SOURCE,
       category: params.category,
+      owner: params.owner,
     },
   };
 
@@ -208,14 +231,25 @@ export async function createResumableUploadSession(params: {
   return sessionUri;
 }
 
-export async function listRecentFiles(category?: string): Promise<DriveFileRecord[]> {
+export async function listRecentFiles(params?: {
+  owner?: ExpenseOwner;
+  category?: string;
+}): Promise<DriveFileRecord[]> {
   const accessToken = await refreshAccessToken();
+  const owner = params?.owner;
+  const category = params?.category;
 
   const queryParts = [
     `appProperties has { key='source' and value='${DRIVE_APP_SOURCE}' }`,
     "mimeType != 'application/vnd.google-apps.folder'",
     "trashed=false",
   ];
+
+  if (owner) {
+    queryParts.push(
+      `appProperties has { key='owner' and value='${escapeDriveQueryValue(owner)}' }`,
+    );
+  }
 
   if (category) {
     queryParts.push(
@@ -232,16 +266,26 @@ export async function listRecentFiles(category?: string): Promise<DriveFileRecor
   return data.files ?? [];
 }
 
-export async function listCategoryFolders(): Promise<string[]> {
-  const accessToken = await refreshAccessToken();
-
+async function listCategoriesUnderOwnerFolder(
+  accessToken: string,
+  owner: ExpenseOwner,
+): Promise<string[]> {
   const rootFolderId = await findFolderByName(accessToken, DRIVE_ROOT_FOLDER, null);
   if (!rootFolderId) {
     return [];
   }
 
+  const ownerFolderId = await findFolderByName(
+    accessToken,
+    getOwnerFolderName(owner),
+    rootFolderId,
+  );
+  if (!ownerFolderId) {
+    return [];
+  }
+
   const query = [
-    `'${rootFolderId}' in parents`,
+    `'${ownerFolderId}' in parents`,
     "mimeType='application/vnd.google-apps.folder'",
     `appProperties has { key='source' and value='${DRIVE_APP_SOURCE}' }`,
     "trashed=false",
@@ -254,3 +298,34 @@ export async function listCategoryFolders(): Promise<string[]> {
 
   return (data.files ?? []).map((folder) => folder.name).filter(Boolean);
 }
+
+export async function listCategoryFolders(
+  ownerFilter: RecentOwnerFilter = "me",
+): Promise<string[]> {
+  const accessToken = await refreshAccessToken();
+
+  if (ownerFilter === "everyone") {
+    const [meCategories, parentsCategories] = await Promise.all([
+      listCategoriesUnderOwnerFolder(accessToken, "me"),
+      listCategoriesUnderOwnerFolder(accessToken, "parents"),
+    ]);
+    return Array.from(new Set([...meCategories, ...parentsCategories]));
+  }
+
+  if (isValidExpenseOwner(ownerFilter)) {
+    return listCategoriesUnderOwnerFolder(accessToken, ownerFilter);
+  }
+
+  return listCategoriesUnderOwnerFolder(accessToken, "me");
+}
+
+export function parseDriveFileOwner(appProperties?: Record<string, string>): ExpenseOwner {
+  const owner = appProperties?.owner;
+  if (owner && isValidExpenseOwner(owner)) {
+    return owner;
+  }
+
+  return "me";
+}
+
+export { OWNER_FOLDER_NAMES };

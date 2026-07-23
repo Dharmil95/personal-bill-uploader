@@ -3,7 +3,8 @@
 This app uploads bills to your personal Google Drive using OAuth and the `drive.file` scope. Files are stored under:
 
 ```text
-My Drive/Bills/<Category>/
+My Drive/Bills/Me/<Category>/
+My Drive/Bills/Parents/<Category>/
 ```
 
 ## 1. Create a Google Cloud project
@@ -101,10 +102,11 @@ Commit `.env.example` only. Keep real secrets in local `.env` and in Vercel — 
 ## 7. How uploads work
 
 1. You sign in with the app password.
-2. The browser asks the Vercel API for a Google Drive resumable upload session.
-3. The server creates or reuses `Bills/<Category>/` in your Drive.
-4. The browser uploads the file bytes directly to Google Drive.
-5. The Recent tab reads uploaded files from Drive metadata.
+2. Choose **Me** or **Parents** (default Me), then pick a category.
+3. The browser asks the Vercel API for a Google Drive resumable upload session.
+4. The server creates or reuses `Bills/Me/<Category>/` or `Bills/Parents/<Category>/` in your Drive.
+5. The browser uploads the file bytes directly to Google Drive.
+6. The Recent tab reads uploaded files from Drive metadata and can filter by Me, Parents, or Everyone.
 
 This avoids Vercel’s 4.5 MB serverless request limit while still supporting files up to 25 MB.
 

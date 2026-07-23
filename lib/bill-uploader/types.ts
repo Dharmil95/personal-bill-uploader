@@ -1,5 +1,9 @@
 export type Tab = "upload" | "recent";
 
+export type ExpenseOwner = "me" | "parents";
+
+export type RecentOwnerFilter = ExpenseOwner | "everyone";
+
 export type SelectedFile = {
   id: string;
   name: string;
@@ -12,6 +16,7 @@ export type RecentItem = {
   id: string;
   filename: string;
   category: string;
+  owner: ExpenseOwner;
   fileType: "image" | "pdf";
   thumb: string | null;
   uploadedAt: string;

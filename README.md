@@ -1,14 +1,15 @@
 # Bill Uploader
 
-A mobile-first application for capturing, categorizing, and managing bills. Uploads are saved to your Google Drive under `Bills/<Category>/`.
+A mobile-first application for capturing, categorizing, and managing bills. Uploads are saved to your Google Drive under `Bills/Me/<Category>/` or `Bills/Parents/<Category>/`.
 
 ## Features
 
 - Password-protected access
 - Camera capture and file selection for images and PDFs
+- Expense owner selection: **Me** or **Parents** (default Me)
 - Category selection and custom categories
 - Direct Google Drive uploads (up to 25 MB)
-- Recent upload history loaded from Drive
+- Recent upload history with Me / Parents / Everyone filters
 
 ## Run locally
 

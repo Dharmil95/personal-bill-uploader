@@ -11,18 +11,45 @@ import { Toast } from "@/components/bill-uploader/Toast";
 import { UploadOverlay } from "@/components/bill-uploader/UploadOverlay";
 import { UploadTab } from "@/components/bill-uploader/upload/UploadTab";
 import { useToast } from "@/hooks/useToast";
-import { MAX_UPLOAD_BYTES, SEED_CATEGORIES } from "@/lib/bill-uploader/constants";
-import { uploadFilesToDrive } from "@/lib/bill-uploader/driveUpload";
-import type { RecentItem, SelectedFile, Tab } from "@/lib/bill-uploader/types";
 import {
+  DEFAULT_EXPENSE_OWNER,
+  DEFAULT_RECENT_OWNER_FILTER,
+  MAX_UPLOAD_BYTES,
+  SEED_CATEGORIES,
+} from "@/lib/bill-uploader/constants";
+import { uploadFilesToDrive } from "@/lib/bill-uploader/driveUpload";
+import type {
+  ExpenseOwner,
+  RecentItem,
+  RecentOwnerFilter,
+  SelectedFile,
+  Tab,
+} from "@/lib/bill-uploader/types";
+import {
+  buildDriveDestinationPath,
   buildUploadFilename,
   formatBytes,
   formatRecentTotal,
   getFileTypeFromMime,
+  getOwnerLabel,
   isAllowedUploadFile,
   isPdfFile,
+  isValidExpenseOwner,
   resolveUploadMimeType,
 } from "@/lib/bill-uploader/utils";
+
+function buildRecentQuery(owner: RecentOwnerFilter, category: string): string {
+  const params = new URLSearchParams();
+  params.set("owner", owner);
+  if (category !== "All") {
+    params.set("category", category);
+  }
+  return `?${params.toString()}`;
+}
+
+function buildCategoriesQuery(owner: RecentOwnerFilter): string {
+  return `?owner=${owner}`;
+}
 
 export function BillUploaderApp() {
   const router = useRouter();
@@ -32,11 +59,13 @@ export function BillUploaderApp() {
   const [tab, setTab] = useState<Tab>("upload");
   const [files, setFiles] = useState<SelectedFile[]>([]);
   const [categories, setCategories] = useState<string[]>(() => [...SEED_CATEGORIES]);
+  const [selectedOwner, setSelectedOwner] = useState<ExpenseOwner>(DEFAULT_EXPENSE_OWNER);
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [customMode, setCustomMode] = useState(false);
   const [customText, setCustomText] = useState("");
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
+  const [filterOwner, setFilterOwner] = useState<RecentOwnerFilter>(DEFAULT_RECENT_OWNER_FILTER);
   const [filterCategory, setFilterCategory] = useState("All");
   const [recent, setRecent] = useState<RecentItem[]>([]);
   const [recentLoading, setRecentLoading] = useState(false);
@@ -62,9 +91,9 @@ export function BillUploaderApp() {
     }
   }, []);
 
-  const loadCategories = useCallback(async () => {
+  const loadCategories = useCallback(async (owner: RecentOwnerFilter) => {
     try {
-      const response = await fetch("/api/drive/categories");
+      const response = await fetch(`/api/drive/categories${buildCategoriesQuery(owner)}`);
       const data = (await response.json()) as { categories?: string[] };
       if (response.ok && data.categories?.length) {
         setCategories(data.categories);
@@ -74,47 +103,52 @@ export function BillUploaderApp() {
     }
   }, []);
 
-  const loadRecent = useCallback(async (category = filterCategory) => {
-    setRecentLoading(true);
-    try {
-      const query = category === "All" ? "" : `?category=${encodeURIComponent(category)}`;
-      const response = await fetch(`/api/drive/recent${query}`);
-      const data = (await response.json()) as { items?: RecentItem[]; error?: string };
+  const loadRecent = useCallback(
+    async (owner: RecentOwnerFilter = filterOwner, category: string = filterCategory) => {
+      setRecentLoading(true);
+      try {
+        const response = await fetch(`/api/drive/recent${buildRecentQuery(owner, category)}`);
+        const data = (await response.json()) as { items?: RecentItem[]; error?: string };
 
-      if (!response.ok) {
-        throw new Error(data.error ?? "Failed to load recent uploads");
-      }
-
-      const items = data.items ?? [];
-      const nextThumbs = new Set(
-        items.map((item) => item.thumb).filter((thumb): thumb is string => !!thumb),
-      );
-
-      previewUrlsRef.current.forEach((url, id) => {
-        if (url.startsWith("blob:") && !nextThumbs.has(url)) {
-          URL.revokeObjectURL(url);
-          previewUrlsRef.current.delete(id);
+        if (!response.ok) {
+          throw new Error(data.error ?? "Failed to load recent uploads");
         }
-      });
 
-      setRecent(items);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Failed to load recent uploads";
-      showToast(message);
-    } finally {
-      setRecentLoading(false);
-    }
-  }, [filterCategory, showToast]);
+        const items = data.items ?? [];
+        const nextThumbs = new Set(
+          items.map((item) => item.thumb).filter((thumb): thumb is string => !!thumb),
+        );
+
+        previewUrlsRef.current.forEach((url, id) => {
+          if (url.startsWith("blob:") && !nextThumbs.has(url)) {
+            URL.revokeObjectURL(url);
+            previewUrlsRef.current.delete(id);
+          }
+        });
+
+        setRecent(items);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Failed to load recent uploads";
+        showToast(message);
+      } finally {
+        setRecentLoading(false);
+      }
+    },
+    [filterCategory, filterOwner, showToast],
+  );
 
   useEffect(() => {
-    void loadCategories();
-  }, [loadCategories]);
+    if (tab === "upload") {
+      void loadCategories(selectedOwner);
+    }
+  }, [tab, selectedOwner, loadCategories]);
 
   useEffect(() => {
     if (tab === "recent") {
-      void loadRecent(filterCategory);
+      void loadCategories(filterOwner);
+      void loadRecent(filterOwner, filterCategory);
     }
-  }, [tab, filterCategory, loadRecent]);
+  }, [tab, filterOwner, filterCategory, loadCategories, loadRecent]);
 
   useEffect(() => {
     const urls = previewUrlsRef.current;
@@ -173,6 +207,10 @@ export function BillUploaderApp() {
     setFiles((current) => current.filter((file) => file.id !== id));
   };
 
+  const selectOwner = (owner: ExpenseOwner) => {
+    setSelectedOwner(owner);
+  };
+
   const selectCategory = (name: string) => {
     setSelectedCategory(name);
     setCustomMode(false);
@@ -201,6 +239,7 @@ export function BillUploaderApp() {
     }
 
     const category = selectedCategory;
+    const owner = selectedOwner;
     const uploadFiles = files.map((selected) => ({
       file: selected.file,
       filename: buildUploadFilename(category, selected.name),
@@ -217,6 +256,7 @@ export function BillUploaderApp() {
       const results = await uploadFilesToDrive(
         uploadFiles,
         category,
+        owner,
         setUploadProgress,
         abortController.signal,
       );
@@ -225,24 +265,28 @@ export function BillUploaderApp() {
         const selected = files[index];
         const mimeType =
           result.mimeType ?? resolveUploadMimeType(selected.name, selected.file.type);
+        const itemOwner =
+          result.appProperties?.owner && isValidExpenseOwner(result.appProperties.owner)
+            ? result.appProperties.owner
+            : owner;
+
         return {
           id: result.id || createId(),
           filename: result.name ?? uploadFiles[index].filename,
           category: result.appProperties?.category ?? category,
+          owner: itemOwner,
           fileType: getFileTypeFromMime(mimeType),
-          // Keep local blob previews; do not revoke yet (used as recent thumbs).
           thumb: selected.previewUrl,
           uploadedAt: "Just now",
           webViewLink: result.webViewLink ?? null,
         };
       });
 
-      // Drop selected files, but keep blob URLs alive for recent-item thumbs.
       setFiles([]);
       setSelectedCategory(null);
       setRecent((currentRecent) => [...newItems, ...currentRecent]);
       showToast(
-        `Uploaded ${newItems.length} file${newItems.length === 1 ? "" : "s"} to Bills/${category}`,
+        `Uploaded ${newItems.length} file${newItems.length === 1 ? "" : "s"} to ${buildDriveDestinationPath(owner, category)}`,
       );
     } catch (error) {
       const message = error instanceof Error ? error.message : "Upload failed";
@@ -262,13 +306,18 @@ export function BillUploaderApp() {
       return;
     }
 
-    showToast(`Bills/${item.category}/${item.filename}`);
+    showToast(buildDriveDestinationPath(item.owner, item.category) + item.filename);
   };
 
   const logout = async () => {
     await fetch("/api/auth/logout", { method: "POST" });
     router.replace("/login");
     router.refresh();
+  };
+
+  const handleOwnerFilterChange = (owner: RecentOwnerFilter) => {
+    setFilterOwner(owner);
+    setFilterCategory("All");
   };
 
   const visibleRecent =
@@ -282,7 +331,7 @@ export function BillUploaderApp() {
 
   const headerTitle = isUploadTab ? "Upload a bill" : "Recent uploads";
   const headerSubtitle = isUploadTab
-    ? "Saved to Google Drive"
+    ? `Saved to Google Drive · ${getOwnerLabel(selectedOwner)}`
     : recentLoading
       ? "Loading from Google Drive…"
       : formatRecentTotal(recent.length);
@@ -301,6 +350,7 @@ export function BillUploaderApp() {
         <UploadTab
           files={files}
           categories={categories}
+          selectedOwner={selectedOwner}
           selectedCategory={selectedCategory}
           customMode={customMode}
           customText={customText}
@@ -313,6 +363,7 @@ export function BillUploaderApp() {
           onTriggerCamera={triggerCamera}
           onTriggerFile={triggerFile}
           onRemoveFile={removeFile}
+          onSelectOwner={selectOwner}
           onSelectCategory={selectCategory}
           onToggleCustomMode={toggleCustomMode}
           onCustomTextChange={setCustomText}
@@ -322,8 +373,10 @@ export function BillUploaderApp() {
       ) : (
         <RecentTab
           categories={categories}
+          filterOwner={filterOwner}
           filterCategory={filterCategory}
           items={visibleRecent}
+          onOwnerFilterChange={handleOwnerFilterChange}
           onFilterChange={setFilterCategory}
           onOpenItem={openItem}
         />
@@ -332,7 +385,9 @@ export function BillUploaderApp() {
       {uploading ? (
         <UploadOverlay
           progress={Math.round(uploadProgress)}
-          destinationLabel={selectedCategory ? `Bills/${selectedCategory}/` : ""}
+          destinationLabel={
+            selectedCategory ? buildDriveDestinationPath(selectedOwner, selectedCategory) : ""
+          }
         />
       ) : null}
     </AppShell>

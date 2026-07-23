@@ -1,3 +1,12 @@
+import {
+  DEFAULT_EXPENSE_OWNER,
+  EXPENSE_OWNERS,
+  OWNER_FOLDER_NAMES,
+  OWNER_LABELS,
+  RECENT_OWNER_FILTERS,
+} from "@/lib/bill-uploader/constants";
+import type { ExpenseOwner, RecentOwnerFilter } from "@/lib/bill-uploader/types";
+
 export function slug(value: string): string {
   return value
     .toLowerCase()
@@ -63,6 +72,38 @@ export function isAllowedMimeType(mimeType: string): boolean {
 
 export function buildUploadFilename(category: string, originalName: string): string {
   return `${slug(category)}_${todayISO()}_${originalName}`;
+}
+
+export function getOwnerFolderName(owner: ExpenseOwner): string {
+  return OWNER_FOLDER_NAMES[owner];
+}
+
+export function getOwnerLabel(owner: ExpenseOwner): string {
+  return OWNER_LABELS[owner];
+}
+
+export function buildDriveDestinationPath(owner: ExpenseOwner, category: string): string {
+  return `Bills/${getOwnerFolderName(owner)}/${category}/`;
+}
+
+export function isValidExpenseOwner(value: string): value is ExpenseOwner {
+  return EXPENSE_OWNERS.includes(value as ExpenseOwner);
+}
+
+export function parseRecentOwnerFilter(value: string | null): RecentOwnerFilter {
+  if (value && RECENT_OWNER_FILTERS.includes(value as RecentOwnerFilter)) {
+    return value as RecentOwnerFilter;
+  }
+
+  return DEFAULT_EXPENSE_OWNER;
+}
+
+export function parseExpenseOwner(value: string | null | undefined): ExpenseOwner {
+  if (value && isValidExpenseOwner(value)) {
+    return value;
+  }
+
+  return DEFAULT_EXPENSE_OWNER;
 }
 
 export function getFileTypeFromMime(mimeType: string): "image" | "pdf" {
