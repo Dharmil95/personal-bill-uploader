@@ -15,7 +15,10 @@ export async function middleware(request: NextRequest) {
   if (
     pathname.startsWith("/_next") ||
     pathname.startsWith("/seed") ||
-    /\.(?:ico|png|jpg|jpeg|svg|css|js|webp)$/.test(pathname)
+    pathname === "/manifest.webmanifest" ||
+    pathname === "/sw.js" ||
+    pathname.startsWith("/icons/") ||
+    /\.(?:ico|png|jpg|jpeg|svg|css|js|webp|webmanifest)$/.test(pathname)
   ) {
     return NextResponse.next();
   }

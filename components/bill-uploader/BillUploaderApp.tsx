@@ -46,6 +46,7 @@ import {
   resolveUploadMimeType,
   todayISO,
 } from "@/lib/bill-uploader/utils";
+import { buildSmsTextFromShare, consumeSharePayload } from "@/lib/bill-uploader/sharePayload";
 
 function buildRecentQuery(owner: RecentOwnerFilter, category: string): string {
   const params = new URLSearchParams();
@@ -244,45 +245,90 @@ export function BillUploaderApp() {
   const triggerCamera = () => cameraInputRef.current?.click();
   const triggerFile = () => fileInputRef.current?.click();
 
+  const addUploadFiles = useCallback(
+    (list: File[]) => {
+      if (!list.length) {
+        return;
+      }
+
+      list.forEach((file) => {
+        if (!isAllowedUploadFile(file)) {
+          showToast(`${file.name} is not a supported image or PDF`);
+          return;
+        }
+
+        if (file.size > MAX_UPLOAD_BYTES) {
+          showToast(`${file.name} exceeds the ${formatBytes(MAX_UPLOAD_BYTES)} limit`);
+          return;
+        }
+
+        const id = createId();
+        const isPdf = isPdfFile(file);
+        const previewUrl = isPdf ? null : URL.createObjectURL(file);
+
+        if (previewUrl) {
+          previewUrlsRef.current.set(id, previewUrl);
+        }
+
+        setFiles((current) => [
+          ...current,
+          {
+            id,
+            name: file.name,
+            isPdf,
+            previewUrl,
+            file,
+          },
+        ]);
+      });
+    },
+    [createId, showToast],
+  );
+
   const onFilesChosen = (event: React.ChangeEvent<HTMLInputElement>) => {
     const list = Array.from(event.target.files ?? []);
-    if (!list.length) {
-      return;
-    }
-
-    list.forEach((file) => {
-      if (!isAllowedUploadFile(file)) {
-        showToast(`${file.name} is not a supported image or PDF`);
-        return;
-      }
-
-      if (file.size > MAX_UPLOAD_BYTES) {
-        showToast(`${file.name} exceeds the ${formatBytes(MAX_UPLOAD_BYTES)} limit`);
-        return;
-      }
-
-      const id = createId();
-      const isPdf = isPdfFile(file);
-      const previewUrl = isPdf ? null : URL.createObjectURL(file);
-
-      if (previewUrl) {
-        previewUrlsRef.current.set(id, previewUrl);
-      }
-
-      setFiles((current) => [
-        ...current,
-        {
-          id,
-          name: file.name,
-          isPdf,
-          previewUrl,
-          file,
-        },
-      ]);
-    });
-
+    addUploadFiles(list);
     event.target.value = "";
   };
+
+  useEffect(() => {
+    void (async () => {
+      const payload = await consumeSharePayload();
+      if (!payload) {
+        return;
+      }
+
+      setTab("upload");
+
+      if (payload.files.length > 0) {
+        setUploadMode("photo");
+        addUploadFiles(
+          payload.files.map(
+            (file) => new File([file.blob], file.name, { type: file.type || "application/octet-stream" }),
+          ),
+        );
+        showToast(
+          `Shared ${payload.files.length} file${payload.files.length === 1 ? "" : "s"} ready to upload`,
+        );
+        return;
+      }
+
+      const sharedText = buildSmsTextFromShare(payload);
+      if (sharedText) {
+        setUploadMode("sms");
+        setSmsText(sharedText);
+        showToast("Shared text ready for SMS expense");
+      }
+    })();
+  }, [addUploadFiles, showToast]);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("shareError") === "too-large") {
+      showToast("Shared file exceeds the 25 MB upload limit");
+      window.history.replaceState({}, "", window.location.pathname);
+    }
+  }, [showToast]);
 
   const removeFile = (id: string) => {
     revokePreviewUrl(id);
