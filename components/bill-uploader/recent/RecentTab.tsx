@@ -12,6 +12,7 @@ type RecentTabProps = {
   onOwnerFilterChange: (owner: RecentOwnerFilter) => void;
   onFilterChange: (category: string) => void;
   onOpenItem: (item: RecentItem) => void;
+  onDeleteItem: (item: RecentItem) => void;
 };
 
 export function RecentTab({
@@ -22,6 +23,7 @@ export function RecentTab({
   onOwnerFilterChange,
   onFilterChange,
   onOpenItem,
+  onDeleteItem,
 }: RecentTabProps) {
   return (
     <div className="flex-1 overflow-y-auto px-5 pb-5 pt-1">
@@ -34,7 +36,7 @@ export function RecentTab({
       {items.length > 0 ? (
         <div className="flex flex-col gap-3">
           {items.map((item) => (
-            <RecentItemRow key={item.id} item={item} onOpen={onOpenItem} />
+            <RecentItemRow key={item.id} item={item} onOpen={onOpenItem} onDelete={onDeleteItem} />
           ))}
         </div>
       ) : (

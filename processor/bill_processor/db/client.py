@@ -24,6 +24,7 @@ class DriveFileRow:
     web_view_link: str | None
     drive_created_at: datetime | None
     process_status: str
+    source: str = "drive"
 
 
 @dataclass(frozen=True)
@@ -57,10 +58,15 @@ class DbClient:
     def __init__(self) -> None:
         conninfo = config.get_database_conninfo()
         try:
-            self._conn = psycopg.connect(conninfo, row_factory=dict_row, connect_timeout=15)
+            self._conn = psycopg.connect(
+                conninfo, row_factory=dict_row, connect_timeout=15
+            )
         except psycopg.OperationalError as exc:
             message = str(exc)
-            if "Network is unreachable" in message or "No address associated with hostname" in message:
+            if (
+                "Network is unreachable" in message
+                or "No address associated with hostname" in message
+            ):
                 raise RuntimeError(
                     f"Could not connect to Supabase Postgres: {message}\n\n"
                     f"{config.SUPABASE_DIRECT_HOST_HELP}"
@@ -86,16 +92,17 @@ class DbClient:
         mime_type: str | None,
         web_view_link: str | None,
         drive_created_at: datetime | None,
+        source: str = "drive",
     ) -> None:
         with self._conn.cursor() as cur:
             cur.execute(
                 """
                 insert into public.drive_files (
                   drive_file_id, filename, owner, category, mime_type,
-                  web_view_link, drive_created_at, process_status
+                  web_view_link, drive_created_at, process_status, source
                 ) values (
                   %(drive_file_id)s, %(filename)s, %(owner)s, %(category)s, %(mime_type)s,
-                  %(web_view_link)s, %(drive_created_at)s, 'pending'
+                  %(web_view_link)s, %(drive_created_at)s, 'pending', %(source)s
                 )
                 on conflict (drive_file_id) do update set
                   filename = excluded.filename,
@@ -104,6 +111,7 @@ class DbClient:
                   mime_type = excluded.mime_type,
                   web_view_link = excluded.web_view_link,
                   drive_created_at = excluded.drive_created_at,
+                  source = excluded.source,
                   updated_at = timezone('utc', now())
                 """,
                 {
@@ -114,25 +122,26 @@ class DbClient:
                     "mime_type": mime_type,
                     "web_view_link": web_view_link,
                     "drive_created_at": drive_created_at,
+                    "source": source,
                 },
             )
         self._conn.commit()
 
     def reclaim_stuck_processing(self, *, stale_minutes: int | None = None) -> int:
         """Reset interrupted jobs stuck in processing back to pending."""
-        minutes = config.PROCESSOR_STALE_MINUTES if stale_minutes is None else stale_minutes
+        minutes = (
+            config.PROCESSOR_STALE_MINUTES if stale_minutes is None else stale_minutes
+        )
         with self._conn.cursor() as cur:
             if minutes <= 0:
-                cur.execute(
-                    """
+                cur.execute("""
                     update public.drive_files
                     set process_status = 'pending',
                         error = null,
                         updated_at = timezone('utc', now())
                     where process_status = 'processing'
                     returning drive_file_id
-                    """
-                )
+                    """)
             else:
                 cur.execute(
                     """
@@ -169,6 +178,7 @@ class DbClient:
                   select drive_file_id
                   from public.drive_files
                   where process_status = any(%(statuses)s)
+                    and review_status = 'active'
                   order by drive_created_at asc nulls last, created_at asc
                   limit %(limit)s
                   for update skip locked
@@ -180,7 +190,8 @@ class DbClient:
                 from candidates c
                 where df.drive_file_id = c.drive_file_id
                 returning df.drive_file_id, df.filename, df.owner, df.category,
-                          df.mime_type, df.web_view_link, df.drive_created_at, df.process_status
+                          df.mime_type, df.web_view_link, df.drive_created_at, df.process_status,
+                          df.source
                 """,
                 {"statuses": statuses, "limit": limit},
             )
@@ -196,6 +207,7 @@ class DbClient:
                 web_view_link=row["web_view_link"],
                 drive_created_at=row["drive_created_at"],
                 process_status=row["process_status"],
+                source=row.get("source") or "drive",
             )
             for row in rows
         ]
@@ -309,15 +321,31 @@ class DbClient:
         self._conn.commit()
         return expense_id
 
-    def count_by_status(self) -> dict[str, int]:
+    def delete_drive_files_not_in(self, drive_file_ids: list[str]) -> int:
+        if not drive_file_ids:
+            return 0
+
         with self._conn.cursor() as cur:
             cur.execute(
                 """
+                delete from public.drive_files
+                where not (drive_file_id = any(%(drive_file_ids)s))
+                  and source = 'drive'
+                returning drive_file_id
+                """,
+                {"drive_file_ids": drive_file_ids},
+            )
+            rows = cur.fetchall()
+        self._conn.commit()
+        return len(rows)
+
+    def count_by_status(self) -> dict[str, int]:
+        with self._conn.cursor() as cur:
+            cur.execute("""
                 select process_status, count(*) as count
                 from public.drive_files
                 group by process_status
-                """
-            )
+                """)
             rows = cur.fetchall()
         return {row["process_status"]: row["count"] for row in rows}
 
@@ -329,6 +357,7 @@ class DbClient:
                        web_view_link, drive_created_at, process_status
                 from public.drive_files
                 where process_status in ('pending', 'failed')
+                  and review_status = 'active'
                 order by drive_created_at asc nulls last, created_at asc
                 limit %(limit)s
                 """,

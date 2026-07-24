@@ -164,7 +164,9 @@ def build_user_prompt(
     return "\n".join(parts)
 
 
-def build_items_slice_prompt(*, filename: str, slice_index: int, slice_count: int) -> str:
+def build_items_slice_prompt(
+    *, filename: str, slice_index: int, slice_count: int
+) -> str:
     return "\n".join(
         [
             f"Filename: {filename}",
@@ -200,7 +202,9 @@ def build_gap_fill_prompt(
             f"Sum of extracted item amounts is short of the grand total by about {amount_gap:.2f}. "
             "Find the missing product row(s) whose prices fill that gap."
         )
-    parts.append('Look especially at products just above "Delivering to" / the address block.')
+    parts.append(
+        'Look especially at products just above "Delivering to" / the address block.'
+    )
     return "\n".join(parts)
 
 
@@ -223,7 +227,11 @@ def build_validation_prompt(
     text: str | None = None,
     expected_item_count: int | None = None,
 ) -> str:
-    item_count = len(first_pass.get("items") or []) if isinstance(first_pass.get("items"), list) else 0
+    item_count = (
+        len(first_pass.get("items") or [])
+        if isinstance(first_pass.get("items"), list)
+        else 0
+    )
     parts = [
         f"Filename: {filename}",
         f"First-pass extraction had {item_count} line item(s).",
@@ -242,3 +250,43 @@ def build_validation_prompt(
         parts.append("Bill text:")
         parts.append(text[:16000])
     return "\n".join(parts)
+
+
+SMS_SYSTEM_PROMPT = """You extract structured expense data from Indian bank, UPI, or wallet payment SMS messages.
+
+Rules:
+- vendor: merchant or payee name as shown in the SMS (short brand name is OK).
+- amount: transaction amount debited or paid (number only).
+- currency: ISO code, default INR.
+- confidence: 0-1 for how sure you are of vendor and amount.
+- note: one short line summarizing the transaction type if helpful.
+
+Do NOT extract or infer the transaction date — the user provides the date separately.
+
+Respond ONLY with JSON:
+{
+  "vendor": str|null,
+  "amount": number|null,
+  "currency": str,
+  "confidence": float,
+  "note": str
+}"""
+
+
+def build_sms_prompt(
+    *,
+    text: str,
+    filename: str,
+    owner: str,
+    category: str,
+) -> str:
+    return "\n".join(
+        [
+            f"Filename: {filename}",
+            f"Owner: {owner}",
+            f"Category: {category}",
+            "",
+            "SMS message:",
+            text[:8000],
+        ]
+    )

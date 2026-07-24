@@ -11,6 +11,13 @@ dependencies = [
     "Pillow>=10.0",
 ]
 
+[project.optional-dependencies]
+dev = [
+    "black>=24.0",
+    "isort>=5.13",
+    "ruff>=0.8",
+]
+
 [project.scripts]
 bill-processor = "bill_processor.__main__:main"
 
@@ -21,3 +28,23 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["bill_processor*"]
+
+[tool.black]
+line-length = 88
+target-version = ["py311"]
+
+[tool.isort]
+profile = "black"
+line_length = 88
+src_paths = ["bill_processor"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+ignore = ["E501"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["bill_processor"]

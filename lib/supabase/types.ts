@@ -1,5 +1,9 @@
 export type ProcessStatus = "pending" | "processing" | "done" | "failed" | "skipped";
 
+export type ReviewStatus = "active" | "invalid";
+
+export type ExpenseSource = "drive" | "sms";
+
 export type ExpenseOwner = "me" | "parents";
 
 export type DriveFileRow = {
@@ -11,6 +15,8 @@ export type DriveFileRow = {
   web_view_link: string | null;
   drive_created_at: string | null;
   process_status: ProcessStatus;
+  review_status: ReviewStatus;
+  source: ExpenseSource;
   processed_at: string | null;
   error: string | null;
   model: string | null;

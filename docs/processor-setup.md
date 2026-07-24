@@ -12,6 +12,8 @@ See also: [supabase-setup.md](./supabase-setup.md) for database schema and verif
 - Supabase migrations applied:
   - [`db/migrations/001_initial.sql`](../db/migrations/001_initial.sql)
   - [`db/migrations/002_expense_line_items.sql`](../db/migrations/002_expense_line_items.sql)
+  - [`db/migrations/003_bill_review_status.sql`](../db/migrations/003_bill_review_status.sql)
+  - [`db/migrations/004_expense_source.sql`](../db/migrations/004_expense_source.sql)
 
 ## Install
 
@@ -89,9 +91,22 @@ python -m bill_processor --limit 1 --reprocess
    - Images → Ollama vision (tall screenshots are sliced so totals are not lost)
    - PDF with text → Ollama chat on extracted text
    - Scanned PDF (little text) → PyMuPDF render pages → Ollama vision
+   - SMS `.txt` (`text/plain`, filename `sms_*.txt`) → Ollama text-only prompt for vendor/amount (no line items)
 5. **Write** — upsert `expenses` (bill header), replace `expense_line_items`, mark `drive_files` as `done` or `failed`.
 
-By default (`PROCESSOR_VALIDATE=1`) each file gets **two** Gemma calls: extract, then validate/fill missing line items. The first-pass grand total is preferred when it looks correct. Set `PROCESSOR_VALIDATE=0` to skip the second pass (faster, fewer VRAM cycles).
+SMS expenses use the **same sync/claim/process flow** as photo/PDF uploads. The upload app saves a `.txt` file to Drive with these `appProperties`:
+
+| Key | Value |
+|-----|-------|
+| `source` | `bill-uploader` |
+| `owner` | `me` or `parents` |
+| `category` | user-selected category |
+| `entryType` | `sms` |
+| `billDate` | `YYYY-MM-DD` from the upload UI (never from the LLM) |
+
+The processor sets `drive_files.source = 'sms'` when `entryType=sms`. Transaction **date** comes from `billDate` (fallback: date in filename `sms_YYYY-MM-DD_*.txt`). Full SMS text is stored in `expenses.raw_llm_json.sms_text`.
+
+By default (`PROCESSOR_VALIDATE=1`) each **photo/PDF** gets two Gemma calls. SMS uses a single text pass (validation is skipped).
 
 Category and owner come from Drive upload metadata, not from the LLM.
 

@@ -12,12 +12,14 @@ Migration files:
 |------|---------|
 | [`db/migrations/001_initial.sql`](../db/migrations/001_initial.sql) | `drive_files` + `expenses` |
 | [`db/migrations/002_expense_line_items.sql`](../db/migrations/002_expense_line_items.sql) | `expense_line_items` + bill money fields |
+| [`db/migrations/003_bill_review_status.sql`](../db/migrations/003_bill_review_status.sql) | `drive_files.review_status` for invalid bills |
+| [`db/migrations/004_expense_source.sql`](../db/migrations/004_expense_source.sql) | `drive_files.source` (`drive` or `sms`) |
 
 Tables:
 
 | Table | Purpose |
 |-------|---------|
-| `drive_files` | Ledger of Drive files and processing status |
+| `drive_files` | Ledger of Drive files, processing status, and user review status |
 | `expenses` | One row per bill (vendor, grand total, date, discount, etc.) |
 | `expense_line_items` | Product/line rows for each bill |
 
@@ -27,9 +29,7 @@ Tables:
 2. Go to **SQL Editor**.
 3. Paste the contents of [`db/migrations/001_initial.sql`](../db/migrations/001_initial.sql).
 4. Click **Run**.
-5. Confirm both tables appear in **Table Editor**.
-
-Future schema changes should be added as new numbered files, for example `db/migrations/002_add_line_items.sql`.
+5. Repeat for [`002_expense_line_items.sql`](../db/migrations/002_expense_line_items.sql), [`003_bill_review_status.sql`](../db/migrations/003_bill_review_status.sql), and [`004_expense_source.sql`](../db/migrations/004_expense_source.sql).
 
 ## Environment variables
 
@@ -151,6 +151,17 @@ The Next.js app exposes authenticated dashboard routes that read Supabase via th
 | `GET /api/dashboard/expenses/[id]` | One expense with line items and Drive link |
 
 The **Dashboard** tab in the app uses these routes. On Vercel, set `NEXT_PUBLIC_SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY`. Locally, `DATABASE_URL` is enough if the service role key is not set yet.
+
+Invalid bills (`review_status = invalid`) are excluded from spend totals but still appear in the bills list with an **Invalid** badge.
+
+## Bill management API
+
+Authenticated routes for deleting bills and marking bad extractions:
+
+| Route | Purpose |
+|-------|---------|
+| `DELETE /api/bills/[driveFileId]` | Move file to Google Drive trash and delete Supabase rows (cascade) |
+| `PATCH /api/bills/[driveFileId]` | Body `{ "reviewStatus": "invalid" \| "active" }` — exclude or restore in dashboard stats |
 
 ## What comes next
 

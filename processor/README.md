@@ -16,3 +16,17 @@ pip install -e .
 python -m bill_processor --dry-run
 python -m bill_processor --limit 5
 ```
+
+Or use the Makefile:
+
+```bash
+cd processor
+make install-dev          # .venv + package + ruff, black, isort
+make format               # isort + black
+make ruff-format          # ruff format (alternative to isort/black)
+make lint                 # ruff check
+make check                # format check + lint (no writes)
+make process              # sync + process pending/failed (LIMIT=9999)
+make process LIMIT=10     # process up to 10 files
+make dry-run              # preview pending work without LLM
+```

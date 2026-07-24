@@ -74,6 +74,10 @@ export function buildUploadFilename(category: string, originalName: string): str
   return `${slug(category)}_${todayISO()}_${originalName}`;
 }
 
+export function buildSmsFilename(category: string, billDate: string): string {
+  return `sms_${billDate}_${slug(category)}.txt`;
+}
+
 export function getOwnerFolderName(owner: ExpenseOwner): string {
   return OWNER_FOLDER_NAMES[owner];
 }
@@ -114,8 +118,16 @@ export function parseExpenseOwner(value: string | null | undefined): ExpenseOwne
   return DEFAULT_EXPENSE_OWNER;
 }
 
-export function getFileTypeFromMime(mimeType: string): "image" | "pdf" {
-  return mimeType === "application/pdf" ? "pdf" : "image";
+export function getFileTypeFromMime(mimeType: string): "image" | "pdf" | "txt" {
+  if (mimeType === "application/pdf") {
+    return "pdf";
+  }
+
+  if (mimeType === "text/plain") {
+    return "txt";
+  }
+
+  return "image";
 }
 
 export function formatDriveTimestamp(iso: string): string {

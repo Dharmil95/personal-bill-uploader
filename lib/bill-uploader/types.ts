@@ -17,11 +17,13 @@ export type RecentItem = {
   filename: string;
   category: string;
   owner: ExpenseOwner;
-  fileType: "image" | "pdf";
+  fileType: "image" | "pdf" | "txt";
   thumb: string | null;
   uploadedAt: string;
   webViewLink?: string | null;
 };
+
+export type UploadMode = "photo" | "sms";
 
 export type ToastState = {
   visible: boolean;

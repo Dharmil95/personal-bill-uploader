@@ -22,6 +22,8 @@ class DriveFile:
     mime_type: str | None
     web_view_link: str | None
     drive_created_at: datetime | None
+    entry_type: str | None = None
+    bill_date: str | None = None
 
 
 def _escape_drive_query_value(value: str) -> str:
@@ -53,7 +55,9 @@ class DriveClient:
                 data = json.loads(resp.read())
         except urllib.error.HTTPError as exc:
             details = exc.read().decode(errors="replace")
-            raise RuntimeError(f"Failed to refresh Google access token: {details}") from exc
+            raise RuntimeError(
+                f"Failed to refresh Google access token: {details}"
+            ) from exc
 
         token = data.get("access_token")
         if not token:
@@ -89,7 +93,9 @@ class DriveClient:
             if exc.code == 401:
                 self._access_token = None
                 req_headers["Authorization"] = f"Bearer {self.access_token}"
-                req = urllib.request.Request(url, data=body, headers=req_headers, method=method)
+                req = urllib.request.Request(
+                    url, data=body, headers=req_headers, method=method
+                )
                 with urllib.request.urlopen(req, timeout=120) as resp:
                     return resp.read() if resp.status != 204 else b""
             details = exc.read().decode(errors="replace")
@@ -110,7 +116,9 @@ class DriveClient:
         created_raw = raw.get("createdTime")
         drive_created_at = None
         if created_raw:
-            drive_created_at = datetime.fromisoformat(created_raw.replace("Z", "+00:00"))
+            drive_created_at = datetime.fromisoformat(
+                created_raw.replace("Z", "+00:00")
+            )
 
         return DriveFile(
             drive_file_id=raw["id"],
@@ -120,6 +128,8 @@ class DriveClient:
             mime_type=raw.get("mimeType"),
             web_view_link=raw.get("webViewLink"),
             drive_created_at=drive_created_at,
+            entry_type=app_props.get("entryType"),
+            bill_date=app_props.get("billDate"),
         )
 
     def list_bill_files(
@@ -145,20 +155,26 @@ class DriveClient:
 
         query = " and ".join(query_parts)
         fields = "files(id,name,mimeType,webViewLink,createdTime,appProperties)"
-        path = (
-            "files?"
-            + urllib.parse.urlencode(
-                {
-                    "q": query,
-                    "orderBy": "createdTime desc",
-                    "pageSize": str(page_size),
-                    "fields": fields,
-                    "spaces": "drive",
-                }
-            )
+        path = "files?" + urllib.parse.urlencode(
+            {
+                "q": query,
+                "orderBy": "createdTime desc",
+                "pageSize": str(page_size),
+                "fields": fields,
+                "spaces": "drive",
+            }
         )
         raw = json.loads(self._drive_request(path))
         return [self._parse_drive_file(item) for item in raw.get("files", [])]
 
     def download_file(self, drive_file_id: str) -> bytes:
         return self._drive_request(f"files/{drive_file_id}?alt=media")
+
+    def get_file(self, drive_file_id: str) -> DriveFile:
+        path = f"files/{urllib.parse.quote(drive_file_id)}?" + urllib.parse.urlencode(
+            {
+                "fields": "id,name,mimeType,webViewLink,createdTime,appProperties",
+            }
+        )
+        raw = json.loads(self._drive_request(path))
+        return self._parse_drive_file(raw)

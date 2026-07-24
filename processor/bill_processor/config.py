@@ -26,6 +26,7 @@ DRIVE_APP_SOURCE = "bill-uploader"
 def get_database_url() -> str:
     return os.getenv("DATABASE_POOLER_URL") or os.getenv("DATABASE_URL", "")
 
+
 SUPABASE_DIRECT_HOST_HELP = """
 Supabase direct connections (db.[ref].supabase.co:5432) are IPv6-only and often fail from WSL.
 

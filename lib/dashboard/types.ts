@@ -1,4 +1,4 @@
-import type { ExpenseLineItemRow, ExpenseRow } from "@/lib/supabase/types";
+import type { ExpenseLineItemRow, ExpenseRow, ExpenseSource, ReviewStatus } from "@/lib/supabase/types";
 import type { ExpenseOwner, RecentOwnerFilter } from "@/lib/bill-uploader/types";
 
 export type DashboardBillSummary = {
@@ -12,6 +12,7 @@ export type DashboardBillSummary = {
   billDate: string | null;
   webViewLink: string | null;
   lineItemCount: number;
+  reviewStatus: ReviewStatus;
 };
 
 export type DashboardCategorySpend = {
@@ -24,6 +25,21 @@ export type DashboardVendorSpend = {
   vendor: string;
   amount: number;
   count: number;
+};
+
+export type DashboardDailySpend = {
+  date: string;
+  amount: number;
+  count: number;
+};
+
+export type DashboardDayDetail = {
+  date: string;
+  ownerFilter: RecentOwnerFilter;
+  currency: string;
+  totalSpend: number;
+  billCount: number;
+  bills: DashboardBillSummary[];
 };
 
 export type DashboardProcessStatus = {
@@ -46,6 +62,7 @@ export type DashboardSummary = {
   byOwner: { me: number; parents: number };
   byCategory: DashboardCategorySpend[];
   topVendors: DashboardVendorSpend[];
+  dailySpend: DashboardDailySpend[];
   bills: DashboardBillSummary[];
   processStatus: DashboardProcessStatus;
 };
@@ -55,4 +72,7 @@ export type DashboardExpenseDetail = {
   lineItems: ExpenseLineItemRow[];
   webViewLink: string | null;
   filename: string | null;
+  reviewStatus: ReviewStatus;
+  source: ExpenseSource;
+  smsText: string | null;
 };

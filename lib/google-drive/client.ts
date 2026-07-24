@@ -328,4 +328,25 @@ export function parseDriveFileOwner(appProperties?: Record<string, string>): Exp
   return "me";
 }
 
+export async function trashDriveFile(driveFileId: string): Promise<void> {
+  const accessToken = await refreshAccessToken();
+
+  try {
+    await driveRequest<Record<string, never>>(
+      `files/${encodeURIComponent(driveFileId)}`,
+      accessToken,
+      {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ trashed: true }),
+      },
+    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (!message.includes("404") && !message.includes("notFound")) {
+      throw error;
+    }
+  }
+}
+
 export { OWNER_FOLDER_NAMES };

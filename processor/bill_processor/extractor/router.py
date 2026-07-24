@@ -7,7 +7,9 @@ from bill_processor.extractor.pdf import route_pdf_content
 from bill_processor.extractor.types import ExtractedContent
 
 
-def extract_content(*, file_bytes: bytes, mime_type: str | None, filename: str) -> ExtractedContent:
+def extract_content(
+    *, file_bytes: bytes, mime_type: str | None, filename: str
+) -> ExtractedContent:
     mime = (mime_type or "").lower()
 
     if is_image_mime(mime) or _looks_like_image(filename):
@@ -24,7 +26,13 @@ def extract_content(*, file_bytes: bytes, mime_type: str | None, filename: str) 
             return ExtractedContent(extraction_method=method, text=text)
         return ExtractedContent(extraction_method=method, images_b64=images_b64)
 
-    raise RuntimeError(f"Unsupported file type: mime={mime_type!r} filename={filename!r}")
+    if mime == "text/plain" or filename.lower().startswith("sms_"):
+        text = file_bytes.decode("utf-8", errors="replace").strip()
+        return ExtractedContent(extraction_method="sms_text", text=text)
+
+    raise RuntimeError(
+        f"Unsupported file type: mime={mime_type!r} filename={filename!r}"
+    )
 
 
 def _looks_like_image(filename: str) -> bool:

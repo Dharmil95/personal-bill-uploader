@@ -55,8 +55,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.dry_run:
         drive = DriveClient()
         with DbClient() as db:
-            synced = sync_drive_files(drive, db)
+            synced, removed = sync_drive_files(drive, db)
             print(f"Synced {synced} Drive file(s) (metadata only).")
+            if removed:
+                print(f"Removed {removed} stale DB row(s) no longer in Drive.")
             lines = dry_run_preview(db, limit=args.limit)
             if not lines:
                 print("No pending or failed files.")
@@ -70,8 +72,10 @@ def main(argv: list[str] | None = None) -> int:
 
     drive = DriveClient()
     with DbClient() as db:
-        synced = sync_drive_files(drive, db)
+        synced, removed = sync_drive_files(drive, db)
         print(f"Synced {synced} Drive file(s).")
+        if removed:
+            print(f"Removed {removed} stale DB row(s) no longer in Drive.")
 
         if args.sync_only:
             print("Status counts:", db.count_by_status())

@@ -5,14 +5,17 @@ import type { DashboardBillSummary } from "@/lib/dashboard/types";
 type BillsListProps = {
   bills: DashboardBillSummary[];
   onSelectBill: (billId: string) => void;
+  hideTitle?: boolean;
 };
 
-export function BillsList({ bills, onSelectBill }: BillsListProps) {
+export function BillsList({ bills, onSelectBill, hideTitle = false }: BillsListProps) {
   return (
     <section>
-      <div className="mb-2 text-[13px] font-semibold" style={{ color: COLORS.text }}>
-        Bills
-      </div>
+      {!hideTitle ? (
+        <div className="mb-2 text-[13px] font-semibold" style={{ color: COLORS.text }}>
+          Bills
+        </div>
+      ) : null}
       {bills.length === 0 ? (
         <div
           className="rounded-[14px] border border-dashed px-4 py-8 text-center text-[13px]"
@@ -22,12 +25,16 @@ export function BillsList({ bills, onSelectBill }: BillsListProps) {
         </div>
       ) : (
         <div className="flex flex-col gap-2.5">
-          {bills.map((bill) => (
+          {bills.map((bill) => {
+            const isInvalid = bill.reviewStatus === "invalid";
+
+            return (
             <button
               key={bill.id}
               type="button"
               onClick={() => onSelectBill(bill.id)}
               className="flex w-full cursor-pointer items-center gap-3 rounded-[14px] border border-black/[0.07] bg-white p-3 text-left"
+              style={isInvalid ? { opacity: 0.72 } : undefined}
             >
               <div className="min-w-0 flex-1">
                 <div className="flex items-start justify-between gap-2">
@@ -51,6 +58,14 @@ export function BillsList({ bills, onSelectBill }: BillsListProps) {
                   >
                     {bill.category}
                   </span>
+                  {isInvalid ? (
+                    <span
+                      className="rounded-full px-2 py-0.5 text-[11px] font-semibold"
+                      style={{ background: "#fdecec", color: COLORS.pdf }}
+                    >
+                      Invalid
+                    </span>
+                  ) : null}
                   <span className="text-[11.5px]" style={{ color: COLORS.textSubtle }}>
                     {formatBillDate(bill.billDate)}
                   </span>
@@ -65,7 +80,8 @@ export function BillsList({ bills, onSelectBill }: BillsListProps) {
                 ›
               </div>
             </button>
-          ))}
+            );
+          })}
         </div>
       )}
     </section>

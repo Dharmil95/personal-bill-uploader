@@ -1,9 +1,11 @@
-import type { ExpenseRow, ProcessStatus } from "@/lib/supabase/types";
+import type { ExpenseRow, ProcessStatus, ReviewStatus } from "@/lib/supabase/types";
 import type { RecentOwnerFilter } from "@/lib/bill-uploader/types";
 
+import { expenseDateKey } from "./date";
 import type {
   DashboardBillSummary,
   DashboardCategorySpend,
+  DashboardDailySpend,
   DashboardProcessStatus,
   DashboardSummary,
   DashboardVendorSpend,
@@ -13,6 +15,7 @@ type DriveFileLink = {
   drive_file_id: string;
   process_status: ProcessStatus;
   web_view_link: string | null;
+  review_status: ReviewStatus;
 };
 
 type ExpenseWithAmount = Pick<
@@ -63,36 +66,48 @@ export function buildDashboardSummary(params: {
   const linkByDriveId = new Map(
     driveFiles.map((file) => [file.drive_file_id, file.web_view_link]),
   );
+  const reviewStatusByDriveId = new Map(
+    driveFiles.map((file) => [file.drive_file_id, file.review_status]),
+  );
+
+  const getReviewStatus = (driveFileId: string): ReviewStatus =>
+    reviewStatusByDriveId.get(driveFileId) ?? "active";
+
+  const isActiveExpense = (expense: ExpenseWithAmount) =>
+    getReviewStatus(expense.drive_file_id) === "active";
 
   const filtered =
     ownerFilter === "everyone"
       ? expenses
       : expenses.filter((expense) => expense.owner === ownerFilter);
 
+  const activeFiltered = filtered.filter(isActiveExpense);
+  const activeExpenses = expenses.filter(isActiveExpense);
+
   const { thisMonthStart, lastMonthStart } = monthBounds();
-  const thisMonthExpenses = filtered.filter((expense) =>
+  const thisMonthExpenses = activeFiltered.filter((expense) =>
     isInMonth(expenseEffectiveDate(expense), thisMonthStart),
   );
-  const lastMonthExpenses = filtered.filter((expense) =>
+  const lastMonthExpenses = activeFiltered.filter((expense) =>
     isInMonth(expenseEffectiveDate(expense), lastMonthStart),
   );
 
-  const totalSpend = sumAmounts(filtered);
+  const totalSpend = sumAmounts(activeFiltered);
   const monthSpend = sumAmounts(thisMonthExpenses);
   const lastMonthSpend = sumAmounts(lastMonthExpenses);
-  const billCount = filtered.length;
+  const billCount = activeFiltered.length;
   const monthBillCount = thisMonthExpenses.length;
   const avgBillAmount = billCount > 0 ? totalSpend / billCount : null;
   const monthChangePct =
     lastMonthSpend > 0 ? ((monthSpend - lastMonthSpend) / lastMonthSpend) * 100 : null;
 
   const byOwner = {
-    me: sumAmounts(expenses.filter((expense) => expense.owner === "me")),
-    parents: sumAmounts(expenses.filter((expense) => expense.owner === "parents")),
+    me: sumAmounts(activeExpenses.filter((expense) => expense.owner === "me")),
+    parents: sumAmounts(activeExpenses.filter((expense) => expense.owner === "parents")),
   };
 
   const categoryMap = new Map<string, { amount: number; count: number }>();
-  for (const expense of filtered) {
+  for (const expense of activeFiltered) {
     const current = categoryMap.get(expense.category) ?? { amount: 0, count: 0 };
     categoryMap.set(expense.category, {
       amount: current.amount + (expense.amount ?? 0),
@@ -105,7 +120,7 @@ export function buildDashboardSummary(params: {
     .sort((a, b) => b.amount - a.amount);
 
   const vendorMap = new Map<string, { amount: number; count: number }>();
-  for (const expense of filtered) {
+  for (const expense of activeFiltered) {
     const vendor = expense.vendor?.trim();
     if (!vendor) {
       continue;
@@ -123,6 +138,23 @@ export function buildDashboardSummary(params: {
     .sort((a, b) => b.amount - a.amount)
     .slice(0, 5);
 
+  const dailySpendMap = new Map<string, { amount: number; count: number }>();
+  for (const expense of activeFiltered) {
+    const date = expenseDateKey(expense);
+    if (!date) {
+      continue;
+    }
+    const current = dailySpendMap.get(date) ?? { amount: 0, count: 0 };
+    dailySpendMap.set(date, {
+      amount: current.amount + (expense.amount ?? 0),
+      count: current.count + 1,
+    });
+  }
+
+  const dailySpend: DashboardDailySpend[] = [...dailySpendMap.entries()]
+    .map(([date, stats]) => ({ date, ...stats }))
+    .sort((a, b) => a.date.localeCompare(b.date));
+
   const bills: DashboardBillSummary[] = [...filtered]
     .sort((a, b) => expenseSortKey(b) - expenseSortKey(a))
     .slice(0, billsLimit)
@@ -137,6 +169,7 @@ export function buildDashboardSummary(params: {
       billDate: expense.bill_date,
       webViewLink: linkByDriveId.get(expense.drive_file_id) ?? null,
       lineItemCount: lineItemCounts[expense.id] ?? 0,
+      reviewStatus: getReviewStatus(expense.drive_file_id),
     }));
 
   const processStatus: DashboardProcessStatus = {
@@ -159,7 +192,7 @@ export function buildDashboardSummary(params: {
   }
 
   return {
-    currency: filtered[0]?.currency ?? expenses[0]?.currency ?? "INR",
+    currency: activeFiltered[0]?.currency ?? filtered[0]?.currency ?? expenses[0]?.currency ?? "INR",
     ownerFilter,
     totalSpend,
     monthSpend,
@@ -171,6 +204,7 @@ export function buildDashboardSummary(params: {
     byOwner,
     byCategory,
     topVendors,
+    dailySpend,
     bills,
     processStatus,
   };

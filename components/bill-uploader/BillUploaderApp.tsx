@@ -5,15 +5,17 @@ import { useRouter } from "next/navigation";
 
 import { AppShell } from "@/components/bill-uploader/AppShell";
 import { BottomNav } from "@/components/bill-uploader/BottomNav";
+import { ConfirmDialog } from "@/components/bill-uploader/ConfirmDialog";
 import { BillDetailSheet } from "@/components/bill-uploader/dashboard/BillDetailSheet";
 import { DashboardTab } from "@/components/bill-uploader/dashboard/DashboardTab";
+import type { DashboardView } from "@/components/bill-uploader/dashboard/DashboardViewToggle";
 import { Header } from "@/components/bill-uploader/Header";
 import { RecentTab } from "@/components/bill-uploader/recent/RecentTab";
 import { Toast } from "@/components/bill-uploader/Toast";
 import { UploadOverlay } from "@/components/bill-uploader/UploadOverlay";
 import { UploadTab } from "@/components/bill-uploader/upload/UploadTab";
 import { useToast } from "@/hooks/useToast";
-import type { DashboardSummary } from "@/lib/dashboard/types";
+import type { DashboardDayDetail, DashboardSummary } from "@/lib/dashboard/types";
 import { formatInrAmount } from "@/lib/dashboard/format";
 import {
   DEFAULT_EXPENSE_OWNER,
@@ -22,12 +24,14 @@ import {
   SEED_CATEGORIES,
 } from "@/lib/bill-uploader/constants";
 import { uploadFilesToDrive } from "@/lib/bill-uploader/driveUpload";
+import { uploadSmsToDrive } from "@/lib/bill-uploader/smsUpload";
 import type {
   ExpenseOwner,
   RecentItem,
   RecentOwnerFilter,
   SelectedFile,
   Tab,
+  UploadMode,
 } from "@/lib/bill-uploader/types";
 import {
   buildDriveDestinationPath,
@@ -40,6 +44,7 @@ import {
   isPdfFile,
   isValidExpenseOwner,
   resolveUploadMimeType,
+  todayISO,
 } from "@/lib/bill-uploader/utils";
 
 function buildRecentQuery(owner: RecentOwnerFilter, category: string): string {
@@ -61,7 +66,10 @@ export function BillUploaderApp() {
   const nextIdRef = useRef(3);
 
   const [tab, setTab] = useState<Tab>("upload");
+  const [uploadMode, setUploadMode] = useState<UploadMode>("photo");
   const [files, setFiles] = useState<SelectedFile[]>([]);
+  const [smsText, setSmsText] = useState("");
+  const [smsDate, setSmsDate] = useState(() => todayISO());
   const [categories, setCategories] = useState<string[]>(() => [...SEED_CATEGORIES]);
   const [selectedOwner, setSelectedOwner] = useState<ExpenseOwner>(DEFAULT_EXPENSE_OWNER);
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
@@ -76,7 +84,13 @@ export function BillUploaderApp() {
   const [dashboardFilterOwner, setDashboardFilterOwner] = useState<RecentOwnerFilter>("everyone");
   const [dashboardSummary, setDashboardSummary] = useState<DashboardSummary | null>(null);
   const [dashboardLoading, setDashboardLoading] = useState(false);
+  const [dashboardView, setDashboardView] = useState<DashboardView>("overview");
+  const [selectedCalendarDate, setSelectedCalendarDate] = useState<string | null>(null);
+  const [dayDetail, setDayDetail] = useState<DashboardDayDetail | null>(null);
+  const [dayLoading, setDayLoading] = useState(false);
   const [selectedExpenseId, setSelectedExpenseId] = useState<string | null>(null);
+  const [pendingDeleteItem, setPendingDeleteItem] = useState<RecentItem | null>(null);
+  const [deleteBusy, setDeleteBusy] = useState(false);
 
   const { toast, showToast } = useToast();
 
@@ -168,6 +182,29 @@ export function BillUploaderApp() {
     [dashboardFilterOwner, showToast],
   );
 
+  const loadDayDetail = useCallback(
+    async (date: string, owner: RecentOwnerFilter = dashboardFilterOwner) => {
+      setDayLoading(true);
+      try {
+        const response = await fetch(`/api/dashboard/day?date=${date}&owner=${owner}`);
+        const data = (await response.json()) as DashboardDayDetail & { error?: string };
+
+        if (!response.ok) {
+          throw new Error(data.error ?? "Failed to load day expenses");
+        }
+
+        setDayDetail(data);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Failed to load day expenses";
+        showToast(message);
+        setDayDetail(null);
+      } finally {
+        setDayLoading(false);
+      }
+    },
+    [dashboardFilterOwner, showToast],
+  );
+
   useEffect(() => {
     if (tab === "upload") {
       void loadCategories(selectedOwner);
@@ -186,6 +223,14 @@ export function BillUploaderApp() {
       void loadDashboard(dashboardFilterOwner);
     }
   }, [tab, dashboardFilterOwner, selectedExpenseId, loadDashboard]);
+
+  useEffect(() => {
+    if (tab !== "dashboard" || dashboardView !== "calendar" || !selectedCalendarDate) {
+      return;
+    }
+
+    void loadDayDetail(selectedCalendarDate, dashboardFilterOwner);
+  }, [tab, dashboardView, selectedCalendarDate, dashboardFilterOwner, loadDayDetail]);
 
   useEffect(() => {
     const urls = previewUrlsRef.current;
@@ -337,6 +382,66 @@ export function BillUploaderApp() {
     }
   };
 
+  const submitSms = async () => {
+    const text = smsText.trim();
+    if (uploading || !text || !selectedCategory || !smsDate) {
+      return;
+    }
+
+    const category = selectedCategory;
+    const owner = selectedOwner;
+
+    uploadAbortRef.current?.abort();
+    const abortController = new AbortController();
+    uploadAbortRef.current = abortController;
+
+    setUploading(true);
+    setUploadProgress(50);
+
+    try {
+      const result = await uploadSmsToDrive({
+        text,
+        billDate: smsDate,
+        category,
+        owner,
+        signal: abortController.signal,
+      });
+
+      const mimeType = result.mimeType ?? "text/plain";
+      const itemOwner =
+        result.appProperties?.owner && isValidExpenseOwner(result.appProperties.owner)
+          ? result.appProperties.owner
+          : owner;
+
+      const newItem: RecentItem = {
+        id: result.id || createId(),
+        filename: result.name ?? `sms_${smsDate}_${category}.txt`,
+        category: result.appProperties?.category ?? category,
+        owner: itemOwner,
+        fileType: getFileTypeFromMime(mimeType),
+        thumb: null,
+        uploadedAt: "Just now",
+        webViewLink: result.webViewLink ?? null,
+      };
+
+      setSmsText("");
+      setSmsDate(todayISO());
+      setSelectedCategory(null);
+      setRecent((currentRecent) => [newItem, ...currentRecent]);
+      setUploadProgress(100);
+      showToast("Saved to Drive — run processor to add to Dashboard");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Save failed";
+      if (message !== "Upload cancelled") {
+        showToast(message);
+      }
+    } finally {
+      setUploading(false);
+      setUploadProgress(0);
+      uploadAbortRef.current = null;
+    }
+  };
+
   const openItem = (item: RecentItem) => {
     if (item.webViewLink) {
       window.open(item.webViewLink, "_blank", "noopener,noreferrer");
@@ -344,6 +449,55 @@ export function BillUploaderApp() {
     }
 
     showToast(buildDriveDestinationPath(item.owner, item.category) + item.filename);
+  };
+
+  const deleteBillByDriveId = async (driveFileId: string) => {
+    const response = await fetch(`/api/bills/${driveFileId}`, { method: "DELETE" });
+    const data = (await response.json()) as { error?: string };
+
+    if (!response.ok) {
+      throw new Error(data.error ?? "Failed to delete bill");
+    }
+  };
+
+  const confirmDeleteRecentItem = async () => {
+    if (!pendingDeleteItem) {
+      return;
+    }
+
+    setDeleteBusy(true);
+    try {
+      await deleteBillByDriveId(pendingDeleteItem.id);
+      setRecent((current) => current.filter((item) => item.id !== pendingDeleteItem.id));
+      if (tab === "dashboard") {
+        void loadDashboard(dashboardFilterOwner);
+      }
+      showToast("Bill deleted");
+      setPendingDeleteItem(null);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to delete bill";
+      showToast(message);
+    } finally {
+      setDeleteBusy(false);
+    }
+  };
+
+  const handleBillUpdated = () => {
+    void loadDashboard(dashboardFilterOwner);
+    if (selectedCalendarDate) {
+      void loadDayDetail(selectedCalendarDate, dashboardFilterOwner);
+    }
+    showToast("Bill updated");
+  };
+
+  const handleBillDeleted = (driveFileId: string) => {
+    setSelectedExpenseId(null);
+    setRecent((current) => current.filter((item) => item.id !== driveFileId));
+    void loadDashboard(dashboardFilterOwner);
+    if (selectedCalendarDate) {
+      void loadDayDetail(selectedCalendarDate, dashboardFilterOwner);
+    }
+    showToast("Bill deleted");
   };
 
   const logout = async () => {
@@ -359,12 +513,29 @@ export function BillUploaderApp() {
 
   const handleDashboardOwnerFilterChange = (owner: RecentOwnerFilter) => {
     setDashboardFilterOwner(owner);
+    setSelectedCalendarDate(null);
+    setDayDetail(null);
+  };
+
+  const handleDashboardViewChange = (view: DashboardView) => {
+    setDashboardView(view);
+    if (view === "overview") {
+      setSelectedCalendarDate(null);
+      setDayDetail(null);
+    }
+  };
+
+  const handleCalendarMonthChange = () => {
+    setSelectedCalendarDate(null);
+    setDayDetail(null);
   };
 
   const handleTabChange = (nextTab: Tab) => {
     setTab(nextTab);
     if (nextTab !== "dashboard") {
       setSelectedExpenseId(null);
+      setSelectedCalendarDate(null);
+      setDayDetail(null);
     }
   };
 
@@ -374,14 +545,21 @@ export function BillUploaderApp() {
       : recent.filter((item) => item.category === filterCategory);
 
   const hasFiles = files.length > 0;
-  const canSubmit = hasFiles && !!selectedCategory && !uploading;
+  const hasSmsInput = smsText.trim().length > 0;
+  const isSmsMode = uploadMode === "sms";
+  const canSubmitPhoto = !isSmsMode && hasFiles && !!selectedCategory && !uploading;
+  const canSubmitSms =
+    isSmsMode && hasSmsInput && !!selectedCategory && !!smsDate && !uploading;
+  const canSubmit = isSmsMode ? canSubmitSms : canSubmitPhoto;
   const isUploadTab = tab === "upload";
   const isRecentTab = tab === "recent";
   const isDashboardTab = tab === "dashboard";
   const isBillDetailOpen = isDashboardTab && !!selectedExpenseId;
 
   const headerTitle = isUploadTab
-    ? "Upload a bill"
+    ? isSmsMode
+      ? "Save SMS expense"
+      : "Upload a bill"
     : isRecentTab
       ? "Recent uploads"
       : isBillDetailOpen
@@ -389,7 +567,9 @@ export function BillUploaderApp() {
         : "Dashboard";
 
   const headerSubtitle = isUploadTab
-    ? `Saved to Google Drive · ${getOwnerLabel(selectedOwner)}`
+    ? isSmsMode
+      ? `Saved to Google Drive · ${getOwnerLabel(selectedOwner)}`
+      : `Saved to Google Drive · ${getOwnerLabel(selectedOwner)}`
     : isRecentTab
       ? recentLoading
         ? "Loading from Google Drive…"
@@ -403,10 +583,18 @@ export function BillUploaderApp() {
             : "Spend at a glance";
 
   const submitLabel = uploading
-    ? "Uploading…"
-    : hasFiles && !selectedCategory
-      ? "Choose a category"
-      : "Upload";
+    ? isSmsMode
+      ? "Saving…"
+      : "Uploading…"
+    : isSmsMode
+      ? !hasSmsInput
+        ? "Paste SMS text"
+        : !selectedCategory
+          ? "Choose a category"
+          : "Save to Drive"
+      : hasFiles && !selectedCategory
+        ? "Choose a category"
+        : "Upload";
 
   return (
     <AppShell>
@@ -414,7 +602,10 @@ export function BillUploaderApp() {
       {toast.visible ? <Toast message={toast.message} /> : null}
       {isUploadTab ? (
         <UploadTab
+          uploadMode={uploadMode}
           files={files}
+          smsText={smsText}
+          smsDate={smsDate}
           categories={categories}
           selectedOwner={selectedOwner}
           selectedCategory={selectedCategory}
@@ -425,6 +616,9 @@ export function BillUploaderApp() {
           submitLabel={submitLabel}
           cameraInputRef={cameraInputRef}
           fileInputRef={fileInputRef}
+          onUploadModeChange={setUploadMode}
+          onSmsTextChange={setSmsText}
+          onSmsDateChange={setSmsDate}
           onFilesChosen={onFilesChosen}
           onTriggerCamera={triggerCamera}
           onTriggerFile={triggerFile}
@@ -434,7 +628,7 @@ export function BillUploaderApp() {
           onToggleCustomMode={toggleCustomMode}
           onCustomTextChange={setCustomText}
           onConfirmCustomCategory={confirmCustomCategory}
-          onSubmit={() => void submit()}
+          onSubmit={() => void (isSmsMode ? submitSms() : submit())}
         />
       ) : isRecentTab ? (
         <RecentTab
@@ -445,19 +639,29 @@ export function BillUploaderApp() {
           onOwnerFilterChange={handleOwnerFilterChange}
           onFilterChange={setFilterCategory}
           onOpenItem={openItem}
+          onDeleteItem={setPendingDeleteItem}
         />
       ) : isBillDetailOpen && selectedExpenseId ? (
         <BillDetailSheet
           expenseId={selectedExpenseId}
           onBack={() => setSelectedExpenseId(null)}
           onError={showToast}
+          onBillUpdated={handleBillUpdated}
+          onBillDeleted={handleBillDeleted}
         />
       ) : (
         <DashboardTab
           summary={dashboardSummary}
           loading={dashboardLoading}
           filterOwner={dashboardFilterOwner}
+          dashboardView={dashboardView}
+          selectedDate={selectedCalendarDate}
+          dayDetail={dayDetail}
+          dayLoading={dayLoading}
           onOwnerFilterChange={handleDashboardOwnerFilterChange}
+          onDashboardViewChange={handleDashboardViewChange}
+          onSelectDate={setSelectedCalendarDate}
+          onCalendarMonthChange={handleCalendarMonthChange}
           onSelectBill={setSelectedExpenseId}
         />
       )}
@@ -471,8 +675,28 @@ export function BillUploaderApp() {
         <UploadOverlay
           progress={Math.round(uploadProgress)}
           destinationLabel={
-            selectedCategory ? buildDriveDestinationPath(selectedOwner, selectedCategory) : ""
+            selectedCategory
+              ? buildDriveDestinationPath(selectedOwner, selectedCategory)
+              : isSmsMode
+                ? "Google Drive"
+                : ""
           }
+        />
+      ) : null}
+      {pendingDeleteItem ? (
+        <ConfirmDialog
+          open
+          title="Delete bill?"
+          message="This removes the file from Google Drive and the dashboard. This cannot be undone."
+          confirmLabel="Delete"
+          destructive
+          busy={deleteBusy}
+          onConfirm={() => void confirmDeleteRecentItem()}
+          onCancel={() => {
+            if (!deleteBusy) {
+              setPendingDeleteItem(null);
+            }
+          }}
         />
       ) : null}
     </AppShell>

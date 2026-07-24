@@ -6,8 +6,9 @@ import base64
 import io
 from dataclasses import dataclass
 
-from bill_processor import config
 from PIL import Image
+
+from bill_processor import config
 
 IMAGE_MIME_PREFIX = "image/"
 
@@ -52,7 +53,9 @@ def _crop_b64(img: Image.Image, top: int, bottom: int, *, max_side: int) -> str:
     return _encode_jpeg(_resize_to_max_side(crop, max_side))
 
 
-def build_image_slices(file_bytes: bytes, *, max_side: int | None = None) -> list[ImageSlice]:
+def build_image_slices(
+    file_bytes: bytes, *, max_side: int | None = None
+) -> list[ImageSlice]:
     """
     Build vision slices for a bill image.
 
@@ -132,7 +135,9 @@ def build_image_slices(file_bytes: bytes, *, max_side: int | None = None) -> lis
         return slices
 
 
-def image_bytes_to_jpeg_b64_list(file_bytes: bytes, *, max_side: int | None = None) -> list[str]:
+def image_bytes_to_jpeg_b64_list(
+    file_bytes: bytes, *, max_side: int | None = None
+) -> list[str]:
     return [s.jpeg_b64 for s in build_image_slices(file_bytes, max_side=max_side)]
 
 

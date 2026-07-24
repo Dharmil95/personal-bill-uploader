@@ -1,9 +1,13 @@
 import { queryPostgres } from "@/lib/db/postgres";
+import { buildDayDetail } from "@/lib/dashboard/day";
+import type { RecentOwnerFilter } from "@/lib/bill-uploader/types";
 import type {
   DriveFileRow,
   ExpenseLineItemRow,
   ExpenseRow,
+  ExpenseSource,
   ProcessStatus,
+  ReviewStatus,
 } from "@/lib/supabase/types";
 import { createSupabaseServerClient, hasSupabaseServiceRoleConfig } from "@/lib/supabase/server";
 
@@ -20,7 +24,10 @@ type ExpenseSummaryRow = Pick<
   | "created_at"
 >;
 
-type DriveFileLinkRow = Pick<DriveFileRow, "drive_file_id" | "process_status" | "web_view_link">;
+type DriveFileLinkRow = Pick<
+  DriveFileRow,
+  "drive_file_id" | "process_status" | "web_view_link" | "review_status"
+>;
 
 function parseNumeric(value: unknown): number | null {
   if (value == null || value === "") {
@@ -82,11 +89,25 @@ function mapLineItemRow(row: Record<string, unknown>): ExpenseLineItemRow {
   };
 }
 
+function extractSmsText(raw: Record<string, unknown> | null | undefined): string | null {
+  if (!raw) {
+    return null;
+  }
+
+  const smsText = raw.sms_text;
+  if (typeof smsText === "string" && smsText.trim()) {
+    return smsText.trim();
+  }
+
+  return null;
+}
+
 function mapDriveFileLinkRow(row: Record<string, unknown>): DriveFileLinkRow {
   return {
     drive_file_id: String(row.drive_file_id),
     process_status: row.process_status as ProcessStatus,
     web_view_link: row.web_view_link == null ? null : String(row.web_view_link),
+    review_status: (row.review_status as ReviewStatus | undefined) ?? "active",
   };
 }
 
@@ -101,7 +122,7 @@ async function fetchDashboardSummaryDataViaSupabase() {
       )
       .order("bill_date", { ascending: false, nullsFirst: false })
       .order("created_at", { ascending: false }),
-    supabase.from("drive_files").select("drive_file_id, process_status, web_view_link"),
+    supabase.from("drive_files").select("drive_file_id, process_status, web_view_link, review_status"),
     supabase.from("expense_line_items").select("expense_id"),
   ]);
 
@@ -140,7 +161,7 @@ async function fetchDashboardSummaryDataViaPostgres() {
     ),
     queryPostgres(
       `
-        select drive_file_id, process_status, web_view_link
+        select drive_file_id, process_status, web_view_link, review_status
         from public.drive_files
       `,
     ),
@@ -191,7 +212,7 @@ async function fetchExpenseDetailViaSupabase(id: string) {
       .order("line_no", { ascending: true }),
     supabase
       .from("drive_files")
-      .select("web_view_link, filename")
+      .select("web_view_link, filename, review_status, source")
       .eq("drive_file_id", expense.drive_file_id)
       .maybeSingle(),
   ]);
@@ -209,6 +230,9 @@ async function fetchExpenseDetailViaSupabase(id: string) {
     lineItems: lineItemsResult.data ?? [],
     webViewLink: driveFileResult.data?.web_view_link ?? null,
     filename: driveFileResult.data?.filename ?? null,
+    reviewStatus: driveFileResult.data?.review_status ?? "active",
+    source: (driveFileResult.data?.source as ExpenseSource | undefined) ?? "drive",
+    smsText: extractSmsText(expense.raw_llm_json),
   };
 }
 
@@ -241,7 +265,7 @@ async function fetchExpenseDetailViaPostgres(id: string) {
     ),
     queryPostgres(
       `
-        select web_view_link, filename
+        select web_view_link, filename, review_status, source
         from public.drive_files
         where drive_file_id = $1
         limit 1
@@ -256,6 +280,9 @@ async function fetchExpenseDetailViaPostgres(id: string) {
     webViewLink:
       driveFileRows[0]?.web_view_link == null ? null : String(driveFileRows[0].web_view_link),
     filename: driveFileRows[0]?.filename == null ? null : String(driveFileRows[0].filename),
+    reviewStatus: (driveFileRows[0]?.review_status as ReviewStatus | undefined) ?? "active",
+    source: (driveFileRows[0]?.source as ExpenseSource | undefined) ?? "drive",
+    smsText: extractSmsText(expense.raw_llm_json),
   };
 }
 
@@ -265,4 +292,103 @@ export async function fetchExpenseDetail(id: string) {
   }
 
   return fetchExpenseDetailViaPostgres(id);
+}
+
+async function fetchDayDetailViaSupabase(date: string, ownerFilter: RecentOwnerFilter) {
+  const { expenses, driveFiles, lineItemCounts } = await fetchDashboardSummaryDataViaSupabase();
+
+  return buildDayDetail({
+    date,
+    ownerFilter,
+    expenses: (expenses ?? []).map((row) => ({
+      id: String(row.id),
+      drive_file_id: String(row.drive_file_id),
+      owner: row.owner as ExpenseSummaryRow["owner"],
+      category: String(row.category),
+      vendor: row.vendor == null ? null : String(row.vendor),
+      amount: parseNumeric(row.amount),
+      currency: String(row.currency ?? "INR"),
+      bill_date: row.bill_date == null ? null : String(row.bill_date),
+      created_at: String(row.created_at),
+    })),
+    driveFiles: (driveFiles ?? []).map((row) => ({
+      drive_file_id: String(row.drive_file_id),
+      web_view_link: row.web_view_link == null ? null : String(row.web_view_link),
+      review_status: (row.review_status as ReviewStatus | undefined) ?? "active",
+    })),
+    lineItemCounts,
+  });
+}
+
+async function fetchDayDetailViaPostgres(date: string, ownerFilter: RecentOwnerFilter) {
+  const ownerClause =
+    ownerFilter === "everyone" ? "" : "and e.owner = $2";
+
+  const params = ownerFilter === "everyone" ? [date] : [date, ownerFilter];
+
+  const expenseRows = await queryPostgres(
+    `
+      select e.id, e.drive_file_id, e.owner, e.category, e.vendor, e.amount, e.currency,
+             e.bill_date, e.created_at,
+             df.web_view_link, coalesce(df.review_status, 'active') as review_status
+      from public.expenses e
+      left join public.drive_files df on df.drive_file_id = e.drive_file_id
+      where coalesce(df.review_status, 'active') = 'active'
+        and (
+          (e.bill_date is not null and e.bill_date = $1::date)
+          or (e.bill_date is null and (e.created_at at time zone 'utc')::date = $1::date)
+        )
+        ${ownerClause}
+      order by e.amount desc nulls last, e.created_at desc
+    `,
+    params,
+  );
+
+  const lineItemCounts: Record<string, number> = {};
+  if (expenseRows.length > 0) {
+    const expenseIds = expenseRows.map((row) => String(row.id));
+    const lineItemRows = await queryPostgres(
+      `
+        select expense_id
+        from public.expense_line_items
+        where expense_id = any($1::uuid[])
+      `,
+      [expenseIds],
+    );
+
+    for (const row of lineItemRows) {
+      const expenseId = String(row.expense_id);
+      lineItemCounts[expenseId] = (lineItemCounts[expenseId] ?? 0) + 1;
+    }
+  }
+
+  return buildDayDetail({
+    date,
+    ownerFilter,
+    expenses: expenseRows.map((row) => ({
+      id: String(row.id),
+      drive_file_id: String(row.drive_file_id),
+      owner: row.owner as ExpenseSummaryRow["owner"],
+      category: String(row.category),
+      vendor: row.vendor == null ? null : String(row.vendor),
+      amount: parseNumeric(row.amount),
+      currency: String(row.currency ?? "INR"),
+      bill_date: row.bill_date == null ? null : String(row.bill_date),
+      created_at: String(row.created_at),
+    })),
+    driveFiles: expenseRows.map((row) => ({
+      drive_file_id: String(row.drive_file_id),
+      web_view_link: row.web_view_link == null ? null : String(row.web_view_link),
+      review_status: (row.review_status as ReviewStatus | undefined) ?? "active",
+    })),
+    lineItemCounts,
+  });
+}
+
+export async function fetchDayDetail(date: string, ownerFilter: RecentOwnerFilter) {
+  if (hasSupabaseServiceRoleConfig()) {
+    return fetchDayDetailViaSupabase(date, ownerFilter);
+  }
+
+  return fetchDayDetailViaPostgres(date, ownerFilter);
 }

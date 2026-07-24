@@ -10,7 +10,9 @@ import urllib.request
 from bill_processor import config
 
 
-def _request(path: str, *, data: bytes | None = None, timeout: int | None = None) -> dict | list:
+def _request(
+    path: str, *, data: bytes | None = None, timeout: int | None = None
+) -> dict | list:
     url = f"{config.OLLAMA_HOST.rstrip('/')}{path}"
     req = urllib.request.Request(
         url,
@@ -52,7 +54,7 @@ def unload_model(model: str) -> None:
 
 def unload_all_models(*, retries: int = 5) -> None:
     """Unload every model currently in VRAM and wait until /api/ps is empty."""
-    for attempt in range(retries):
+    for _attempt in range(retries):
         loaded = list_loaded_models()
         if not loaded:
             print("Ollama VRAM clear (no models loaded).")

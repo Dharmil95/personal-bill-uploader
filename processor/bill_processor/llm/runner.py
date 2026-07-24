@@ -15,11 +15,13 @@ from bill_processor.llm import client as ollama
 from bill_processor.llm.prompts import (
     GAP_FILL_SYSTEM_PROMPT,
     ITEMS_ONLY_SYSTEM_PROMPT,
+    SMS_SYSTEM_PROMPT,
     SYSTEM_PROMPT,
     TOTALS_ONLY_SYSTEM_PROMPT,
     VALIDATION_SYSTEM_PROMPT,
     build_gap_fill_prompt,
     build_items_slice_prompt,
+    build_sms_prompt,
     build_totals_slice_prompt,
     build_user_prompt,
     build_validation_prompt,
@@ -59,6 +61,14 @@ def extract_bill(
     owner: str,
     category: str,
 ) -> BillExtraction:
+    if content.extraction_method == "sms_text":
+        return _extract_sms(
+            content=content,
+            filename=filename,
+            owner=owner,
+            category=category,
+        )
+
     model = config.VISION_MODEL if content.uses_vision else config.LLM_MODEL
 
     if (
@@ -91,6 +101,57 @@ def extract_bill(
         filename=filename,
         model=model,
         first=first,
+    )
+
+
+def _extract_sms(
+    *,
+    content: ExtractedContent,
+    filename: str,
+    owner: str,
+    category: str,
+) -> BillExtraction:
+    model = config.LLM_MODEL
+    sms_text = content.text or ""
+    user_prompt = build_sms_prompt(
+        text=sms_text,
+        filename=filename,
+        owner=owner,
+        category=category,
+    )
+    print(f"Extraction path=sms_text model={model}")
+
+    raw_text = ollama.chat(
+        model=model,
+        system=SMS_SYSTEM_PROMPT,
+        user=user_prompt,
+    )
+    parsed = _parse_json(raw_text)
+    vendor = _optional_text(parsed.get("vendor"))
+    amount = _parse_amount(parsed.get("amount"))
+    currency = (
+        str(parsed.get("currency") or config.DEFAULT_CURRENCY).strip().upper()
+        or config.DEFAULT_CURRENCY
+    )
+    confidence_raw = parsed.get("confidence")
+    confidence: float | None
+    if confidence_raw is None:
+        confidence = None
+    else:
+        confidence = max(0.0, min(float(confidence_raw), 1.0))
+
+    raw: dict[str, Any] = dict(parsed)
+    raw["sms_text"] = sms_text
+
+    return BillExtraction(
+        vendor=vendor,
+        amount=amount,
+        currency=currency,
+        bill_date=None,
+        confidence=confidence,
+        raw=raw,
+        model=model,
+        items=[],
     )
 
 
@@ -151,7 +212,9 @@ def _extract_tall_screenshot_chunked(
         totals_raw = ollama.chat(
             model=model,
             system=TOTALS_ONLY_SYSTEM_PROMPT,
-            user=build_totals_slice_prompt(filename=filename, owner=owner, category=category),
+            user=build_totals_slice_prompt(
+                filename=filename, owner=owner, category=category
+            ),
             images_b64=[totals_slices[0].jpeg_b64],
         )
         header = _to_extraction(_parse_json(totals_raw), model=model)
@@ -183,7 +246,9 @@ def _extract_tall_screenshot_chunked(
         harvested.extend(_parse_items(parsed.get("items")))
 
     merged_items = _dedupe_items(harvested)
-    print(f"Chunked harvest: raw={len(harvested)} deduped={len(merged_items)} declared={declared}")
+    print(
+        f"Chunked harvest: raw={len(harvested)} deduped={len(merged_items)} declared={declared}"
+    )
 
     if header is None:
         header = BillExtraction(
@@ -205,9 +270,7 @@ def _extract_tall_screenshot_chunked(
         declared=declared,
         grand_total=header.amount,
         gap_images=[
-            s.jpeg_b64
-            for s in content.slices
-            if s.kind in {"items_tail", "totals"}
+            s.jpeg_b64 for s in content.slices if s.kind in {"items_tail", "totals"}
         ][-2:],
     )
 
@@ -224,7 +287,9 @@ def _extract_tall_screenshot_chunked(
         "invoice_number": header.invoice_number,
         "subtotal": float(header.subtotal) if header.subtotal is not None else None,
         "discount": float(header.discount) if header.discount is not None else None,
-        "delivery_fee": float(header.delivery_fee) if header.delivery_fee is not None else None,
+        "delivery_fee": (
+            float(header.delivery_fee) if header.delivery_fee is not None else None
+        ),
         "items": [_item_to_dict(item) for item in merged_items],
         "confidence": header.confidence,
         "note": f"chunked extraction; declared={declared}; items={len(merged_items)}",
@@ -419,10 +484,10 @@ def _run_validation_pass(
 def _parse_json(raw_text: str) -> dict[str, Any]:
     try:
         return json.loads(raw_text)
-    except json.JSONDecodeError:
+    except json.JSONDecodeError as err:
         match = re.search(r"\{.*\}", raw_text, re.DOTALL)
         if not match:
-            raise RuntimeError(f"LLM did not return JSON: {raw_text[:300]}")
+            raise RuntimeError(f"LLM did not return JSON: {raw_text[:300]}") from err
         return json.loads(match.group(0))
 
 
@@ -443,7 +508,9 @@ def _parse_amount(value: Any) -> Decimal | None:
         return None
     if isinstance(value, (int, float)):
         return Decimal(str(value))
-    text = str(value).strip().replace(",", "").replace("₹", "").replace("Rs.", "").strip()
+    text = (
+        str(value).strip().replace(",", "").replace("₹", "").replace("Rs.", "").strip()
+    )
     if not text:
         return None
     try:
@@ -470,10 +537,7 @@ def _parse_items(raw_items: Any) -> list[LineItem]:
         if not isinstance(entry, dict):
             continue
         description = str(
-            entry.get("description")
-            or entry.get("name")
-            or entry.get("item")
-            or ""
+            entry.get("description") or entry.get("name") or entry.get("item") or ""
         ).strip()
         if not description:
             continue
@@ -511,7 +575,9 @@ def _item_key(item: LineItem) -> str:
     return f"{_normalize_desc(item.description)}|{qty}|{amount}"
 
 
-def _amounts_close(a: Decimal | None, b: Decimal | None, *, tol: Decimal = Decimal("0.05")) -> bool:
+def _amounts_close(
+    a: Decimal | None, b: Decimal | None, *, tol: Decimal = Decimal("0.05")
+) -> bool:
     if a is None or b is None:
         return a is None and b is None
     return abs(a - b) <= tol
@@ -530,11 +596,16 @@ def _dedupe_items(items: list[LineItem]) -> list[LineItem]:
             # Same paid amount + qty with very similar name → duplicate
             if (
                 _amounts_close(item.amount, existing.amount)
-                and _amounts_close(item.quantity, existing.quantity, tol=Decimal("0.01"))
+                and _amounts_close(
+                    item.quantity, existing.quantity, tol=Decimal("0.01")
+                )
                 and (
-                    _normalize_desc(item.description) == _normalize_desc(existing.description)
-                    or _normalize_desc(item.description) in _normalize_desc(existing.description)
-                    or _normalize_desc(existing.description) in _normalize_desc(item.description)
+                    _normalize_desc(item.description)
+                    == _normalize_desc(existing.description)
+                    or _normalize_desc(item.description)
+                    in _normalize_desc(existing.description)
+                    or _normalize_desc(existing.description)
+                    in _normalize_desc(item.description)
                 )
             ):
                 duplicate = True
@@ -542,7 +613,9 @@ def _dedupe_items(items: list[LineItem]) -> list[LineItem]:
             # Same amount+qty alone is enough when both descriptions share a long stem
             if (
                 _amounts_close(item.amount, existing.amount)
-                and _amounts_close(item.quantity, existing.quantity, tol=Decimal("0.01"))
+                and _amounts_close(
+                    item.quantity, existing.quantity, tol=Decimal("0.01")
+                )
                 and item.amount is not None
             ):
                 a = _normalize_desc(item.description)
@@ -616,7 +689,9 @@ def _to_extraction(parsed: dict[str, Any], *, model: str) -> BillExtraction:
         or config.DEFAULT_CURRENCY
     )
     bill_date = _parse_date(parsed.get("bill_date"))
-    invoice_number = _optional_text(parsed.get("invoice_number") or parsed.get("order_id"))
+    invoice_number = _optional_text(
+        parsed.get("invoice_number") or parsed.get("order_id")
+    )
     subtotal = _parse_amount(parsed.get("subtotal"))
     discount = _parse_amount(parsed.get("discount"))
     delivery_fee = _parse_amount(parsed.get("delivery_fee"))
@@ -657,7 +732,9 @@ def _merge_passes(
 ) -> BillExtraction:
     """Pick the better item list; avoid union that inflates duplicates."""
     amount = first.amount if first.amount is not None else second.amount
-    delivery = second.delivery_fee if second.delivery_fee is not None else first.delivery_fee
+    delivery = (
+        second.delivery_fee if second.delivery_fee is not None else first.delivery_fee
+    )
     subtotal = second.subtotal if second.subtotal is not None else first.subtotal
     target = _target_items_total(
         grand_total=amount,
@@ -665,9 +742,7 @@ def _merge_passes(
         delivery_fee=delivery,
     )
     expected = (
-        expected_item_count
-        or second.declared_item_count
-        or first.declared_item_count
+        expected_item_count or second.declared_item_count or first.declared_item_count
     )
 
     first_items = _dedupe_items(first.items)
@@ -715,9 +790,11 @@ def _merge_passes(
         "vendor": second.vendor or first.vendor,
         "amount": float(amount) if amount is not None else None,
         "currency": second.currency or first.currency,
-        "bill_date": (second.bill_date or first.bill_date).isoformat()
-        if (second.bill_date or first.bill_date)
-        else None,
+        "bill_date": (
+            (second.bill_date or first.bill_date).isoformat()
+            if (second.bill_date or first.bill_date)
+            else None
+        ),
         "declared_item_count": expected,
         "items": [_item_to_dict(item) for item in items],
     }
@@ -727,7 +804,9 @@ def _merge_passes(
         amount=amount,
         currency=second.currency or first.currency,
         bill_date=second.bill_date or first.bill_date,
-        confidence=second.confidence if second.confidence is not None else first.confidence,
+        confidence=(
+            second.confidence if second.confidence is not None else first.confidence
+        ),
         raw=raw,
         model=f"{first.model}+validate",
         invoice_number=second.invoice_number or first.invoice_number,
